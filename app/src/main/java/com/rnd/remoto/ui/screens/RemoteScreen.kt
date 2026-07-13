@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -51,6 +52,7 @@ import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
+import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,6 +108,19 @@ fun RemoteScreen(
                     controller = controllerFactory.create(device),
                     onResult = ::report
                 )
+                DeviceType.ANDROID_TV -> if (!device.androidTvPaired) {
+                    AndroidTvPairingBody(
+                        device = device,
+                        repository = repository,
+                        onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    )
+                } else {
+                    val controller = remember(device.id) { controllerFactory.create(device) }
+                    DisposableEffect(controller) {
+                        onDispose { controller?.close() }
+                    }
+                    NetworkRemoteBody(controller = controller, onResult = ::report)
+                }
                 else -> {
                     val controller = remember(device.id) { controllerFactory.create(device) }
                     DisposableEffect(controller) {
@@ -258,5 +273,75 @@ private fun IrRemoteBody(
                 androidx.compose.material3.TextButton(onClick = { editingKey = null }) { Text("Cancelar") }
             }
         )
+    }
+}
+
+@Composable
+private fun AndroidTvPairingBody(
+    device: RemoteDevice,
+    repository: DeviceRepository,
+    onError: (String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var pairingClient by remember { mutableStateOf<AndroidTvPairingClient?>(null) }
+    var awaitingPin by remember { mutableStateOf(false) }
+    var isBusy by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf("") }
+
+    Text("Este Android TV / TV Box todavía no está emparejado.", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "Al tocar \"Emparejar\" va a aparecer un código de 6 dígitos en la pantalla del TV. Escribilo acá abajo.",
+        style = MaterialTheme.typography.bodySmall
+    )
+
+    if (!awaitingPin) {
+        Button(
+            enabled = !isBusy,
+            onClick = {
+                val ip = device.ip
+                if (ip == null) {
+                    onError("Este dispositivo no tiene una IP guardada")
+                    return@Button
+                }
+                scope.launch {
+                    isBusy = true
+                    val client = AndroidTvPairingClient(ip)
+                    val result = client.connectAndRequestPin("Control Remoto")
+                    isBusy = false
+                    result.onSuccess {
+                        pairingClient = client
+                        awaitingPin = true
+                    }.onFailure { onError(it.message ?: "No se pudo conectar para emparejar") }
+                }
+            }
+        ) {
+            Text(if (isBusy) "Conectando..." else "Emparejar")
+        }
+    } else {
+        OutlinedTextField(
+            value = pin,
+            onValueChange = { pin = it },
+            label = { Text("Código de 6 dígitos en el TV") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            enabled = !isBusy && pin.length == 6,
+            onClick = {
+                val client = pairingClient ?: return@Button
+                scope.launch {
+                    isBusy = true
+                    val result = client.submitPin(pin.trim())
+                    if (result.isSuccess) {
+                        repository.saveDevice(device.copy(androidTvPaired = true))
+                        awaitingPin = false
+                    } else {
+                        onError(result.exceptionOrNull()?.message ?: "El PIN no coincide")
+                    }
+                    isBusy = false
+                }
+            }
+        ) {
+            Text(if (isBusy) "Verificando..." else "Confirmar código")
+        }
     }
 }

@@ -99,6 +99,7 @@ private fun typeLabel(type: DeviceType): String = when (type) {
     DeviceType.ROKU -> "Roku (Wi-Fi)"
     DeviceType.LG_WEBOS -> "LG Smart TV (Wi-Fi)"
     DeviceType.SAMSUNG -> "Samsung Smart TV (Wi-Fi)"
+    DeviceType.ANDROID_TV -> "Android TV / TV Box (Wi-Fi)"
     DeviceType.WOL -> "Encender por red (Wake-on-LAN)"
 }
 

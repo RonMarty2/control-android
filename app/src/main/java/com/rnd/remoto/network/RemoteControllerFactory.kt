@@ -3,6 +3,7 @@ package com.rnd.remoto.network
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
+import com.rnd.remoto.network.androidtv.AndroidTvRemoteClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -29,6 +30,11 @@ class RemoteControllerFactory(
                 token = device.samsungToken
             ) { newToken ->
                 scope.launch { repository.saveDevice(device.copy(samsungToken = newToken)) }
+            }
+
+            DeviceType.ANDROID_TV -> {
+                if (!device.androidTvPaired) return null // RemoteScreen must pair first
+                AndroidTvRemoteClient(ip = device.ip ?: return null)
             }
 
             DeviceType.IR -> null // IR devices are driven directly by IrController, not RemoteController

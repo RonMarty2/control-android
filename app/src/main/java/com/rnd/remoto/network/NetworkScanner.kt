@@ -9,19 +9,27 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.net.Inet4Address
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 
 data class ScanResult(val ip: String, val guessedType: DeviceType)
 
 /**
  * Best-effort discovery: probes every host on the phone's /24 Wi-Fi subnet
- * for the well-known ports used by Roku (8060), Samsung (8002) and LG webOS
- * (3000). Assumes a typical home /24 network; doesn't do real SSDP/mDNS.
+ * for the well-known ports used by Roku (8060), Samsung (8002), LG webOS (3000)
+ * and Android TV Remote v2 (6467). Assumes a typical home /24 network; doesn't
+ * do real SSDP/mDNS.
  */
 class NetworkScanner(private val context: Context) {
 
-    suspend fun scanLocalNetwork(timeoutMs: Int = 250): List<ScanResult> = withContext(Dispatchers.IO) {
+    /** Phone's own IPv4 address, for diagnostics (e.g. showing it in the UI). */
+    fun getLocalIpAddress(): String? =
+        localSubnetPrefixFromWifiManager()?.let { "$it.x (detectado por WifiManager)" }
+            ?: localIpFromNetworkInterfaces()
+
+    suspend fun scanLocalNetwork(timeoutMs: Int = 300): List<ScanResult> = withContext(Dispatchers.IO) {
         val baseIp = localSubnetPrefix() ?: return@withContext emptyList()
         val semaphore = Semaphore(48)
         (1..254).map { host ->
@@ -38,6 +46,7 @@ class NetworkScanner(private val context: Context) {
         isPortOpen(ip, 8060, timeoutMs) -> DeviceType.ROKU
         isPortOpen(ip, 8002, timeoutMs) -> DeviceType.SAMSUNG
         isPortOpen(ip, 3000, timeoutMs) -> DeviceType.LG_WEBOS
+        isPortOpen(ip, 6467, timeoutMs) -> DeviceType.ANDROID_TV
         else -> null
     }
 
@@ -50,7 +59,12 @@ class NetworkScanner(private val context: Context) {
         false
     }
 
-    private fun localSubnetPrefix(): String? {
+    /** Prefers WifiManager (fast, exact); falls back to scanning network interfaces directly,
+     * which is more resilient to OEM restrictions on WifiManager (seen on some MIUI builds). */
+    private fun localSubnetPrefix(): String? =
+        localSubnetPrefixFromWifiManager() ?: localIpFromNetworkInterfaces()?.let { toSubnetPrefix(it) }
+
+    private fun localSubnetPrefixFromWifiManager(): String? {
         val wifiManager = context.applicationContext
             .getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val ipInt = wifiManager?.connectionInfo?.ipAddress ?: return null
@@ -60,5 +74,22 @@ class NetworkScanner(private val context: Context) {
             (ipInt shr 8) and 0xFF,
             (ipInt shr 16) and 0xFF
         )
+    }
+
+    private fun localIpFromNetworkInterfaces(): String? {
+        return runCatching {
+            NetworkInterface.getNetworkInterfaces().asSequence()
+                .filterNot { it.isLoopback || !it.isUp || it.isVirtual }
+                .flatMap { it.inetAddresses.asSequence() }
+                .filterIsInstance<Inet4Address>()
+                .firstOrNull()
+                ?.hostAddress
+        }.getOrNull()
+    }
+
+    private fun toSubnetPrefix(ip: String): String? {
+        val parts = ip.split(".")
+        if (parts.size != 4) return null
+        return "${parts[0]}.${parts[1]}.${parts[2]}"
     }
 }

@@ -287,7 +287,13 @@ private fun NameAndSaveDialog(title: String, onDismiss: () -> Unit, onConfirm: (
     )
 }
 
-private val WIFI_BRANDS = listOf(DeviceType.ROKU, DeviceType.LG_WEBOS, DeviceType.SAMSUNG, DeviceType.WOL)
+private val WIFI_BRANDS = listOf(
+    DeviceType.ROKU,
+    DeviceType.LG_WEBOS,
+    DeviceType.SAMSUNG,
+    DeviceType.ANDROID_TV,
+    DeviceType.WOL
+)
 
 @Composable
 private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
@@ -359,5 +365,6 @@ private fun shortLabel(type: DeviceType): String = when (type) {
     DeviceType.ROKU -> "Roku"
     DeviceType.LG_WEBOS -> "LG Smart TV"
     DeviceType.SAMSUNG -> "Samsung Smart TV"
+    DeviceType.ANDROID_TV -> "Android TV / TV Box"
     DeviceType.WOL -> "Encender por red"
 }

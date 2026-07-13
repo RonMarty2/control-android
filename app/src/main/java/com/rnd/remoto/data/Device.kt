@@ -8,7 +8,8 @@ enum class DeviceType {
     ROKU,
     LG_WEBOS,
     SAMSUNG,
-    WOL
+    WOL,
+    ANDROID_TV
 }
 
 /**
@@ -25,5 +26,6 @@ data class RemoteDevice(
     val mac: String? = null,
     val samsungToken: String? = null,
     val lgClientKey: String? = null,
+    val androidTvPaired: Boolean = false,
     val irCodes: Map<String, String> = emptyMap()
 )
