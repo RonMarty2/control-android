@@ -19,7 +19,10 @@ import javax.security.auth.x500.X500Principal
  * reconnect to Android TV devices, backed by AndroidKeyStore so the private key never leaves it.
  */
 object AndroidTvIdentity {
-    private const val ALIAS = "remoto_androidtv_client"
+    // v2: bumped alias so devices that generated a key before signature paddings were set
+    // (causing "RSA routines:OPENSSL_internal:internal error" during the TLS handshake)
+    // get a fresh, correctly-configured key instead of reusing the broken one.
+    private const val ALIAS = "remoto_androidtv_client_v2"
     private const val KEYSTORE = "AndroidKeyStore"
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
@@ -33,7 +36,15 @@ object AndroidTvIdentity {
             ALIAS,
             KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
         )
-            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+            .setDigests(
+                KeyProperties.DIGEST_SHA256,
+                KeyProperties.DIGEST_SHA384,
+                KeyProperties.DIGEST_SHA512
+            )
+            .setSignaturePaddings(
+                KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
+                KeyProperties.SIGNATURE_PADDING_RSA_PSS
+            )
             .setKeySize(2048)
             .setCertificateSubject(X500Principal("CN=ControlRemoto"))
             .setCertificateSerialNumber(BigInteger.ONE)
