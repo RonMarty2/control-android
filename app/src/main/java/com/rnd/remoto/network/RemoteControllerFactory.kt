@@ -11,25 +11,27 @@ class RemoteControllerFactory(
     private val repository: DeviceRepository,
     private val scope: CoroutineScope
 ) {
-    fun create(device: RemoteDevice): RemoteController? = when (device.type) {
-        DeviceType.ROKU -> RokuClient(ip = device.ip ?: return null, port = device.port ?: 8060)
+    fun create(device: RemoteDevice): RemoteController? {
+        return when (device.type) {
+            DeviceType.ROKU -> RokuClient(ip = device.ip ?: return null, port = device.port ?: 8060)
 
-        DeviceType.WOL -> WolClient(mac = device.mac ?: return null)
+            DeviceType.WOL -> WolClient(mac = device.mac ?: return null)
 
-        DeviceType.LG_WEBOS -> LgWebOsClient(
-            ip = device.ip ?: return null,
-            clientKey = device.lgClientKey
-        ) { newKey ->
-            scope.launch { repository.saveDevice(device.copy(lgClientKey = newKey)) }
+            DeviceType.LG_WEBOS -> LgWebOsClient(
+                ip = device.ip ?: return null,
+                clientKey = device.lgClientKey
+            ) { newKey ->
+                scope.launch { repository.saveDevice(device.copy(lgClientKey = newKey)) }
+            }
+
+            DeviceType.SAMSUNG -> SamsungClient(
+                ip = device.ip ?: return null,
+                token = device.samsungToken
+            ) { newToken ->
+                scope.launch { repository.saveDevice(device.copy(samsungToken = newToken)) }
+            }
+
+            DeviceType.IR -> null // IR devices are driven directly by IrController, not RemoteController
         }
-
-        DeviceType.SAMSUNG -> SamsungClient(
-            ip = device.ip ?: return null,
-            token = device.samsungToken
-        ) { newToken ->
-            scope.launch { repository.saveDevice(device.copy(samsungToken = newToken)) }
-        }
-
-        DeviceType.IR -> null // IR devices are driven directly by IrController, not RemoteController
     }
 }
