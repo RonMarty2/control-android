@@ -41,6 +41,8 @@ class AndroidTvRemoteClient(
         ready = readyDeferred
         try {
             val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory.createSocket(ip, port) as SSLSocket
+            sslSocket.enabledProtocols = sslSocket.supportedProtocols
+            sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
             sslSocket.startHandshake()
             socket = sslSocket
         } catch (e: Exception) {

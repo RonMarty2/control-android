@@ -40,6 +40,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/*.RSA"
+            excludes += "/META-INF/*.SF"
+            excludes += "/META-INF/*.DSA"
+            excludes += "/META-INF/versions/**"
+            excludes += "/META-INF/INDEX.LIST"
         }
     }
 }
@@ -61,6 +66,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.RemoteControllerFactory
+import com.rnd.remoto.network.androidtv.AndroidTvIdentity
 import com.rnd.remoto.ui.AppNavHost
 import com.rnd.remoto.ui.theme.ControlRemotoTheme
 
@@ -20,6 +21,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        AndroidTvIdentity.initialize(applicationContext)
         val repository = DeviceRepository(applicationContext)
         val irController = IrController(applicationContext)
 

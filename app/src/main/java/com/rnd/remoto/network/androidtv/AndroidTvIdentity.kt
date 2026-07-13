@@ -1,10 +1,15 @@
 package com.rnd.remoto.network.androidtv
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
+import android.content.Context
+import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import java.io.File
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
 import java.util.Date
@@ -12,52 +17,68 @@ import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-import javax.security.auth.x500.X500Principal
 
 /**
  * Persistent client identity (RSA keypair + self-signed certificate) used to pair with and
- * reconnect to Android TV devices, backed by AndroidKeyStore so the private key never leaves it.
+ * reconnect to Android TV devices.
+ *
+ * This intentionally does NOT use AndroidKeyStore: Keystore-backed RSA keys presented as a TLS
+ * client certificate hit a BoringSSL/Conscrypt "RSA routines: internal error" on some devices
+ * (observed on a Xiaomi phone talking to an Android TV box's remote service). Using a plain
+ * software keypair, persisted as a PKCS12 file in app-private storage, sidesteps that.
  */
 object AndroidTvIdentity {
-    // v2: bumped alias so devices that generated a key before signature paddings were set
-    // (causing "RSA routines:OPENSSL_internal:internal error" during the TLS handshake)
-    // get a fresh, correctly-configured key instead of reusing the broken one.
-    private const val ALIAS = "remoto_androidtv_client_v2"
-    private const val KEYSTORE = "AndroidKeyStore"
+    private const val KEYSTORE_FILE = "androidtv_client_identity.p12"
+    private const val KEYSTORE_PASSWORD = "remoto-atv"
+    private const val KEY_ALIAS = "client"
 
-    private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+    private lateinit var appContext: Context
+    private var cachedPrivateKey: PrivateKey? = null
+    private var cachedCertificate: X509Certificate? = null
 
-    private fun ensureKeyPair() {
-        val ks = keyStore()
-        if (ks.containsAlias(ALIAS)) return
-        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEYSTORE)
-        val notAfter = Date(System.currentTimeMillis() + 20L * 365 * 24 * 60 * 60 * 1000)
-        val spec = KeyGenParameterSpec.Builder(
-            ALIAS,
-            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    private fun ensureIdentity() {
+        if (cachedPrivateKey != null && cachedCertificate != null) return
+        val file = File(appContext.filesDir, KEYSTORE_FILE)
+        val ks = KeyStore.getInstance("PKCS12")
+
+        if (file.exists()) {
+            file.inputStream().use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        } else {
+            ks.load(null)
+            val (privateKey, certificate) = generateSelfSignedIdentity()
+            ks.setKeyEntry(KEY_ALIAS, privateKey, KEYSTORE_PASSWORD.toCharArray(), arrayOf(certificate))
+            file.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        }
+
+        cachedPrivateKey = ks.getKey(KEY_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as PrivateKey
+        cachedCertificate = ks.getCertificate(KEY_ALIAS) as X509Certificate
+    }
+
+    private fun generateSelfSignedIdentity(): Pair<PrivateKey, X509Certificate> {
+        val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+
+        val now = System.currentTimeMillis()
+        val subject = X500Name("CN=ControlRemoto")
+        val certBuilder = JcaX509v3CertificateBuilder(
+            subject,
+            BigInteger.valueOf(now),
+            Date(now - 24L * 60 * 60 * 1000),
+            Date(now + 20L * 365 * 24 * 60 * 60 * 1000),
+            subject,
+            keyPair.public
         )
-            .setDigests(
-                KeyProperties.DIGEST_SHA256,
-                KeyProperties.DIGEST_SHA384,
-                KeyProperties.DIGEST_SHA512
-            )
-            .setSignaturePaddings(
-                KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
-                KeyProperties.SIGNATURE_PADDING_RSA_PSS
-            )
-            .setKeySize(2048)
-            .setCertificateSubject(X500Principal("CN=ControlRemoto"))
-            .setCertificateSerialNumber(BigInteger.ONE)
-            .setCertificateNotBefore(Date(0))
-            .setCertificateNotAfter(notAfter)
-            .build()
-        generator.initialize(spec)
-        generator.generateKeyPair()
+        val signer = JcaContentSignerBuilder("SHA256WithRSA").build(keyPair.private)
+        val certificate = JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
+        return keyPair.private to certificate
     }
 
     fun clientCertificate(): X509Certificate {
-        ensureKeyPair()
-        return keyStore().getCertificate(ALIAS) as X509Certificate
+        ensureIdentity()
+        return cachedCertificate!!
     }
 
     /** (modulus, publicExponent) of our own client certificate's RSA public key. */
@@ -69,10 +90,13 @@ object AndroidTvIdentity {
     /** SSLContext presenting our client cert; does not validate the server's certificate,
      * matching the reference implementation (trust is established via the PIN exchange, not TLS). */
     fun buildSslContext(): SSLContext {
-        ensureKeyPair()
-        val ks = keyStore()
+        ensureIdentity()
+        val ks = KeyStore.getInstance("PKCS12").apply {
+            load(null)
+            setKeyEntry(KEY_ALIAS, cachedPrivateKey, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cachedCertificate))
+        }
         val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(ks, null)
+        kmf.init(ks, KEYSTORE_PASSWORD.toCharArray())
 
         val trustManager = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
