@@ -27,8 +27,8 @@ import javax.net.ssl.X509TrustManager
 class SamsungClient(
     private val ip: String,
     private var token: String?,
-    private val onTokenReceived: (String) -> Unit,
-    appName: String = "ControlRemoto"
+    appName: String = "ControlRemoto",
+    private val onTokenReceived: (String) -> Unit
 ) : RemoteController {
 
     private val encodedName = Base64.encodeToString(appName.toByteArray(), Base64.NO_WRAP)
