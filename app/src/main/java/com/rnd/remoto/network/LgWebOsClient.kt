@@ -104,7 +104,8 @@ class LgWebOsClient(
                 error("No se pudo conectar al TV LG. Revisa que esté encendido y acepta el permiso en su pantalla.")
             }
             val name = mapButton(command) ?: error("Comando no soportado")
-            pointerSocket?.send("type:button\nname:$name\n\n") ?: error("Socket no disponible")
+            val sent = pointerSocket?.send("type:button\nname:$name\n\n") ?: error("Socket no disponible")
+            if (!sent) error("No se pudo enviar el comando al TV LG")
         }
     }
 

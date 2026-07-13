@@ -85,7 +85,8 @@ class SamsungClient(
                     put("TypeOfRemote", "SendRemoteKey")
                 })
             }
-            socket?.send(payload.toString()) ?: error("Socket no disponible")
+            val sent = socket?.send(payload.toString()) ?: error("Socket no disponible")
+            if (!sent) error("No se pudo enviar el comando al TV Samsung")
         }
     }
 
