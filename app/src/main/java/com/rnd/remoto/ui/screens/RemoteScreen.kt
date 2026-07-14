@@ -1,6 +1,14 @@
 package com.rnd.remoto.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
@@ -47,7 +56,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
@@ -61,6 +72,8 @@ import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
 import com.rnd.remoto.network.VizioPairingClient
 import com.rnd.remoto.premium.PremiumRepository
 import java.util.UUID
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -206,10 +219,67 @@ private fun RemoteIconButton(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
-    size: Dp = 64.dp
+    size: Dp = 64.dp,
+    repeatable: Boolean = false
 ) {
-    FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(size)) {
-        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(size / 2))
+    if (!repeatable) {
+        FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(size)) {
+            Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(size / 2))
+        }
+        return
+    }
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val containerColor = if (isPressed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondaryContainer
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(containerColor)
+            .repeatingClickable(interactionSource = interactionSource, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(size / 2)
+        )
+    }
+}
+
+/**
+ * Like a plain clickable, but holding it down keeps firing [onClick] on an accelerating
+ * interval instead of only once — mimics a physical remote's fast-forward/rewind behavior.
+ */
+private fun Modifier.repeatingClickable(
+    interactionSource: MutableInteractionSource,
+    maxDelayMillis: Long = 400,
+    minDelayMillis: Long = 80,
+    delayDecayFactor: Float = 0.25f,
+    onClick: () -> Unit
+): Modifier = this.pointerInput(interactionSource) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val press = PressInteraction.Press(down.position)
+        coroutineScope {
+            val heldButtonJob = launch {
+                interactionSource.emit(press)
+                var currentDelayMillis = maxDelayMillis
+                onClick()
+                while (true) {
+                    delay(currentDelayMillis)
+                    onClick()
+                    currentDelayMillis = (currentDelayMillis - (currentDelayMillis * delayDecayFactor).toLong())
+                        .coerceAtLeast(minDelayMillis)
+                }
+            }
+            waitForUpOrCancellation()
+            heldButtonJob.cancel()
+        }
+        interactionSource.emit(PressInteraction.Release(press))
     }
 }
 
@@ -223,15 +293,15 @@ private fun RemoteTextButton(text: String, onClick: () -> Unit) {
 @Composable
 private fun BigDPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 72.dp)
+        RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 72.dp, repeatable = true)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteIconButton(Icons.Filled.KeyboardArrowLeft, "Izquierda", onClick = onLeft, size = 72.dp)
+            RemoteIconButton(Icons.Filled.KeyboardArrowLeft, "Izquierda", onClick = onLeft, size = 72.dp, repeatable = true)
             FilledIconButton(onClick = onCenter, modifier = Modifier.size(84.dp)) {
                 Text("OK", style = MaterialTheme.typography.titleLarge)
             }
-            RemoteIconButton(Icons.Filled.KeyboardArrowRight, "Derecha", onClick = onRight, size = 72.dp)
+            RemoteIconButton(Icons.Filled.KeyboardArrowRight, "Derecha", onClick = onRight, size = 72.dp, repeatable = true)
         }
-        RemoteIconButton(Icons.Filled.KeyboardArrowDown, "Abajo", onClick = onDown, size = 72.dp)
+        RemoteIconButton(Icons.Filled.KeyboardArrowDown, "Abajo", onClick = onDown, size = 72.dp, repeatable = true)
     }
 }
 
