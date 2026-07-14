@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import com.rnd.remoto.R
 import com.rnd.remoto.data.DeviceRepository
@@ -89,16 +90,41 @@ class LockScreenControlsService : Service() {
         }
     }
 
+    private fun pendingIntentFor(actionName: String): PendingIntent {
+        val intent = Intent(this, LockScreenControlsService::class.java).setAction(actionName)
+        return PendingIntent.getService(
+            this,
+            actionName.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun buildNotification(): Notification {
-        fun action(actionName: String, title: String, icon: Int): NotificationCompat.Action {
-            val intent = Intent(this, LockScreenControlsService::class.java).setAction(actionName)
-            val pendingIntent = PendingIntent.getService(
-                this,
-                actionName.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            return NotificationCompat.Action(icon, title, pendingIntent)
+        // Recogida: solo izquierda/derecha (para el buscador de video, como el D-pad de un
+        // control de TV) y play/pausa. Expandida: D-pad completo, volver, inicio, power,
+        // volumen y canal. Una notificación normal con addAction() solo permite 3 botones y no
+        // distingue "recogida" de "expandida", así que armamos el layout a mano con RemoteViews.
+        val collapsedViews = RemoteViews(packageName, R.layout.notif_controls_collapsed).apply {
+            setOnClickPendingIntent(R.id.btn_left, pendingIntentFor(ACTION_LEFT))
+            setOnClickPendingIntent(R.id.btn_play_pause, pendingIntentFor(ACTION_PLAY_PAUSE))
+            setOnClickPendingIntent(R.id.btn_right, pendingIntentFor(ACTION_RIGHT))
+        }
+
+        val expandedViews = RemoteViews(packageName, R.layout.notif_controls_expanded).apply {
+            setOnClickPendingIntent(R.id.btn_up, pendingIntentFor(ACTION_UP))
+            setOnClickPendingIntent(R.id.btn_left, pendingIntentFor(ACTION_LEFT))
+            setOnClickPendingIntent(R.id.btn_select, pendingIntentFor(ACTION_SELECT))
+            setOnClickPendingIntent(R.id.btn_right, pendingIntentFor(ACTION_RIGHT))
+            setOnClickPendingIntent(R.id.btn_down, pendingIntentFor(ACTION_DOWN))
+            setOnClickPendingIntent(R.id.btn_back, pendingIntentFor(ACTION_BACK))
+            setOnClickPendingIntent(R.id.btn_home, pendingIntentFor(ACTION_HOME))
+            setOnClickPendingIntent(R.id.btn_power, pendingIntentFor(ACTION_POWER))
+            setOnClickPendingIntent(R.id.btn_ch_down, pendingIntentFor(ACTION_CHANNEL_DOWN))
+            setOnClickPendingIntent(R.id.btn_play_pause, pendingIntentFor(ACTION_PLAY_PAUSE))
+            setOnClickPendingIntent(R.id.btn_ch_up, pendingIntentFor(ACTION_CHANNEL_UP))
+            setOnClickPendingIntent(R.id.btn_vol_down, pendingIntentFor(ACTION_VOLUME_DOWN))
+            setOnClickPendingIntent(R.id.btn_vol_up, pendingIntentFor(ACTION_VOLUME_UP))
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -111,12 +137,9 @@ class LockScreenControlsService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColorized(true)
             .setColor(BRAND_COLOR)
-            .addAction(action(ACTION_POWER, "Power", R.drawable.ic_notif_power))
-            .addAction(action(ACTION_VOLUME_DOWN, "Vol -", R.drawable.ic_notif_vol_down))
-            .addAction(action(ACTION_VOLUME_UP, "Vol +", R.drawable.ic_notif_vol_up))
-            .addAction(action(ACTION_CHANNEL_DOWN, "Canal -", R.drawable.ic_notif_ch_down))
-            .addAction(action(ACTION_CHANNEL_UP, "Canal +", R.drawable.ic_notif_ch_up))
-            .addAction(action(ACTION_PLAY_PAUSE, "Play/Pausa", R.drawable.ic_notif_play_pause))
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(collapsedViews)
+            .setCustomBigContentView(expandedViews)
             .build()
     }
 
@@ -141,6 +164,13 @@ class LockScreenControlsService : Service() {
         ACTION_CHANNEL_UP -> RemoteCommand.CHANNEL_UP
         ACTION_CHANNEL_DOWN -> RemoteCommand.CHANNEL_DOWN
         ACTION_PLAY_PAUSE -> RemoteCommand.PLAY_PAUSE
+        ACTION_UP -> RemoteCommand.UP
+        ACTION_DOWN -> RemoteCommand.DOWN
+        ACTION_LEFT -> RemoteCommand.LEFT
+        ACTION_RIGHT -> RemoteCommand.RIGHT
+        ACTION_SELECT -> RemoteCommand.SELECT
+        ACTION_BACK -> RemoteCommand.BACK
+        ACTION_HOME -> RemoteCommand.HOME
         else -> null
     }
 
@@ -159,5 +189,12 @@ class LockScreenControlsService : Service() {
         const val ACTION_CHANNEL_UP = "com.rnd.remoto.action.CHANNEL_UP"
         const val ACTION_CHANNEL_DOWN = "com.rnd.remoto.action.CHANNEL_DOWN"
         const val ACTION_PLAY_PAUSE = "com.rnd.remoto.action.PLAY_PAUSE"
+        const val ACTION_UP = "com.rnd.remoto.action.UP"
+        const val ACTION_DOWN = "com.rnd.remoto.action.DOWN"
+        const val ACTION_LEFT = "com.rnd.remoto.action.LEFT"
+        const val ACTION_RIGHT = "com.rnd.remoto.action.RIGHT"
+        const val ACTION_SELECT = "com.rnd.remoto.action.SELECT"
+        const val ACTION_BACK = "com.rnd.remoto.action.BACK"
+        const val ACTION_HOME = "com.rnd.remoto.action.HOME"
     }
 }
