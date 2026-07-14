@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.rnd.remoto.lockscreen.LockScreenControlsService
 import com.rnd.remoto.premium.BillingManager
+import com.rnd.remoto.premium.DebugConfig
 import com.rnd.remoto.premium.PremiumRepository
 import com.rnd.remoto.wallpaper.PhotoWallpaperSetter
 import com.rnd.remoto.wallpaper.VideoWallpaperLauncher
@@ -102,7 +103,7 @@ fun WallpaperScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         val currentState = state ?: return@Scaffold
-        val isPremium = currentState.isPremium
+        val isPremium = currentState.isPremium || DebugConfig.FORCE_PREMIUM
 
         Column(
             modifier = Modifier
