@@ -53,6 +53,8 @@ import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
 import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
+import com.rnd.remoto.network.VizioPairingClient
+import java.util.UUID
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -110,6 +112,19 @@ fun RemoteScreen(
                 )
                 DeviceType.ANDROID_TV -> if (!device.androidTvPaired) {
                     AndroidTvPairingBody(
+                        device = device,
+                        repository = repository,
+                        onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                    )
+                } else {
+                    val controller = remember(device.id) { controllerFactory.create(device) }
+                    DisposableEffect(controller) {
+                        onDispose { controller?.close() }
+                    }
+                    NetworkRemoteBody(controller = controller, onResult = ::report)
+                }
+                DeviceType.VIZIO -> if (device.vizioAuthToken == null) {
+                    VizioPairingBody(
                         device = device,
                         repository = repository,
                         onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
@@ -341,6 +356,80 @@ private fun AndroidTvPairingBody(
                     } else {
                         onError(result.exceptionOrNull()?.message ?: "El PIN no coincide")
                     }
+                    isBusy = false
+                }
+            }
+        ) {
+            Text(if (isBusy) "Verificando..." else "Confirmar código")
+        }
+    }
+}
+
+@Composable
+private fun VizioPairingBody(
+    device: RemoteDevice,
+    repository: DeviceRepository,
+    onError: (String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var pairingClient by remember { mutableStateOf<VizioPairingClient?>(null) }
+    var pairingDeviceId by remember { mutableStateOf<String?>(null) }
+    var awaitingPin by remember { mutableStateOf(false) }
+    var isBusy by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf("") }
+
+    Text("Este TV Vizio todavía no está emparejado.", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "Al tocar \"Emparejar\" va a aparecer un código en la pantalla del TV. Escribilo acá abajo.",
+        style = MaterialTheme.typography.bodySmall
+    )
+
+    if (!awaitingPin) {
+        Button(
+            enabled = !isBusy,
+            onClick = {
+                val ip = device.ip
+                if (ip == null) {
+                    onError("Este dispositivo no tiene una IP guardada")
+                    return@Button
+                }
+                scope.launch {
+                    isBusy = true
+                    val client = VizioPairingClient(ip, device.port ?: 7345)
+                    val deviceId = device.vizioDeviceId ?: UUID.randomUUID().toString()
+                    val result = client.startPairing(deviceId)
+                    isBusy = false
+                    result.onSuccess {
+                        pairingClient = client
+                        pairingDeviceId = deviceId
+                        awaitingPin = true
+                    }.onFailure { onError(it.message ?: "No se pudo conectar para emparejar") }
+                }
+            }
+        ) {
+            Text(if (isBusy) "Conectando..." else "Emparejar")
+        }
+    } else {
+        OutlinedTextField(
+            value = pin,
+            onValueChange = { pin = it },
+            label = { Text("Código mostrado en el TV") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            enabled = !isBusy && pin.isNotBlank(),
+            onClick = {
+                val client = pairingClient ?: return@Button
+                val deviceId = pairingDeviceId ?: return@Button
+                scope.launch {
+                    isBusy = true
+                    val result = client.submitPin(deviceId, pin)
+                    result.onSuccess { authToken ->
+                        repository.saveDevice(
+                            device.copy(vizioDeviceId = deviceId, vizioAuthToken = authToken)
+                        )
+                        awaitingPin = false
+                    }.onFailure { onError(it.message ?: "El código no coincide") }
                     isBusy = false
                 }
             }

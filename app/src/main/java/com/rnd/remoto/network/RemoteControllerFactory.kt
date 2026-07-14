@@ -37,6 +37,20 @@ class RemoteControllerFactory(
                 AndroidTvRemoteClient(ip = device.ip ?: return null)
             }
 
+            DeviceType.SONY_BRAVIA -> SonyBraviaClient(
+                ip = device.ip ?: return null,
+                psk = device.sonyPsk ?: return null
+            )
+
+            DeviceType.PHILIPS -> PhilipsClient(ip = device.ip ?: return null)
+
+            DeviceType.PANASONIC -> PanasonicClient(ip = device.ip ?: return null)
+
+            DeviceType.VIZIO -> {
+                val token = device.vizioAuthToken ?: return null // RemoteScreen must pair first
+                VizioClient(ip = device.ip ?: return null, authToken = token, port = device.port ?: 7345)
+            }
+
             DeviceType.IR -> null // IR devices are driven directly by IrController, not RemoteController
         }
     }

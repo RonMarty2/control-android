@@ -31,9 +31,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.rnd.remoto.data.DeviceCategory
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
+import com.rnd.remoto.data.RemoteDevice
+import com.rnd.remoto.data.category
 import kotlinx.coroutines.launch
+
+private val CATEGORY_ORDER = listOf(
+    DeviceCategory.SMART_TV,
+    DeviceCategory.TV_BOX,
+    DeviceCategory.INFRARROJO,
+    DeviceCategory.OTRO
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,25 +77,25 @@ fun HomeScreen(
                 }
             }
         } else {
+            val grouped = devices.groupBy { it.type.category() }
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(devices, key = { it.id }) { device ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                        onClick = { onOpenDevice(device.id) }
-                    ) {
-                        ListItem(
-                            headlineContent = { Text(device.name) },
-                            supportingContent = { Text(typeLabel(device.type)) },
-                            leadingContent = { Icon(typeIcon(device.type), contentDescription = null) },
-                            trailingContent = {
-                                IconButton(onClick = { scope.launch { repository.deleteDevice(device.id) } }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Eliminar")
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                CATEGORY_ORDER.forEach { category ->
+                    val devicesInCategory = grouped[category] ?: return@forEach
+                    item(key = "header_$category") {
+                        Text(
+                            categoryLabel(category),
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(devicesInCategory, key = { it.id }) { device ->
+                        DeviceRow(
+                            device = device,
+                            onOpen = { onOpenDevice(device.id) },
+                            onDelete = { scope.launch { repository.deleteDevice(device.id) } }
                         )
                     }
                 }
@@ -94,11 +104,42 @@ fun HomeScreen(
     }
 }
 
+@Composable
+private fun DeviceRow(device: RemoteDevice, onOpen: () -> Unit, onDelete: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        onClick = onOpen
+    ) {
+        ListItem(
+            headlineContent = { Text(device.name) },
+            supportingContent = { Text(typeLabel(device.type)) },
+            leadingContent = { Icon(typeIcon(device.type), contentDescription = null) },
+            trailingContent = {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Eliminar")
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+private fun categoryLabel(category: DeviceCategory): String = when (category) {
+    DeviceCategory.SMART_TV -> "Smart TV"
+    DeviceCategory.TV_BOX -> "TV Box / Streaming"
+    DeviceCategory.INFRARROJO -> "Infrarrojo"
+    DeviceCategory.OTRO -> "Otro"
+}
+
 private fun typeLabel(type: DeviceType): String = when (type) {
     DeviceType.IR -> "Infrarrojo"
     DeviceType.ROKU -> "Roku (Wi-Fi)"
     DeviceType.LG_WEBOS -> "LG Smart TV (Wi-Fi)"
     DeviceType.SAMSUNG -> "Samsung Smart TV (Wi-Fi)"
+    DeviceType.SONY_BRAVIA -> "Sony Bravia (Wi-Fi)"
+    DeviceType.VIZIO -> "Vizio SmartCast (Wi-Fi)"
+    DeviceType.PHILIPS -> "Philips (Wi-Fi)"
+    DeviceType.PANASONIC -> "Panasonic Viera (Wi-Fi)"
     DeviceType.ANDROID_TV -> "Android TV / TV Box (Wi-Fi)"
     DeviceType.WOL -> "Encender por red (Wake-on-LAN)"
 }

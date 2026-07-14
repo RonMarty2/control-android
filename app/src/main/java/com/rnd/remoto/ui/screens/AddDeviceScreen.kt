@@ -45,9 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.rnd.remoto.data.DeviceCategory
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
+import com.rnd.remoto.data.category
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.ScanResult
 import kotlinx.coroutines.launch
@@ -253,7 +255,7 @@ private fun WifiDiscoverStep(repository: DeviceRepository, onDone: () -> Unit) {
                             name = name,
                             type = result.guessedType,
                             ip = result.ip,
-                            port = if (result.guessedType == DeviceType.ROKU) 8060 else null
+                            port = result.port
                         )
                     )
                     pendingResult = null
@@ -288,31 +290,50 @@ private fun NameAndSaveDialog(title: String, onDismiss: () -> Unit, onConfirm: (
 }
 
 private val WIFI_BRANDS = listOf(
-    DeviceType.ROKU,
-    DeviceType.LG_WEBOS,
     DeviceType.SAMSUNG,
+    DeviceType.LG_WEBOS,
+    DeviceType.SONY_BRAVIA,
+    DeviceType.VIZIO,
+    DeviceType.PHILIPS,
+    DeviceType.PANASONIC,
+    DeviceType.ROKU,
     DeviceType.ANDROID_TV,
     DeviceType.WOL
 )
 
+private fun categoryLabel(category: DeviceCategory): String = when (category) {
+    DeviceCategory.SMART_TV -> "Smart TV"
+    DeviceCategory.TV_BOX -> "TV Box / Streaming"
+    DeviceCategory.OTRO -> "Otro"
+    DeviceCategory.INFRARROJO -> "Infrarrojo"
+}
+
 @Composable
 private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var selectedType by rememberSaveable { mutableStateOf(DeviceType.ROKU) }
+    var selectedType by rememberSaveable { mutableStateOf(DeviceType.SAMSUNG) }
     var name by rememberSaveable { mutableStateOf("") }
     var ip by rememberSaveable { mutableStateOf("") }
     var mac by rememberSaveable { mutableStateOf("") }
+    var psk by rememberSaveable { mutableStateOf("") }
 
-    val isValid = name.isNotBlank() && if (selectedType == DeviceType.WOL) mac.isNotBlank() else ip.isNotBlank()
+    val isValid = name.isNotBlank() && when (selectedType) {
+        DeviceType.WOL -> mac.isNotBlank()
+        DeviceType.SONY_BRAVIA -> ip.isNotBlank() && psk.isNotBlank()
+        else -> ip.isNotBlank()
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WIFI_BRANDS.forEach { type ->
-                FilterChip(
-                    selected = selectedType == type,
-                    onClick = { selectedType = type },
-                    label = { Text(shortLabel(type)) }
-                )
+        WIFI_BRANDS.groupBy { it.category() }.forEach { (category, types) ->
+            Text(categoryLabel(category), style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                types.forEach { type ->
+                    FilterChip(
+                        selected = selectedType == type,
+                        onClick = { selectedType = type },
+                        label = { Text(shortLabel(type)) }
+                    )
+                }
             }
         }
 
@@ -339,10 +360,24 @@ private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
             )
         }
 
+        if (selectedType == DeviceType.SONY_BRAVIA) {
+            OutlinedTextField(
+                value = psk,
+                onValueChange = { psk = it },
+                label = { Text("Clave precompartida (PSK)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "En el TV: Ajustes → Red → Config. de red doméstica → Control IP → " +
+                    "activá el control IP y anotá/definí la clave precompartida.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
         Button(
             onClick = {
                 scope.launch {
-                    repository.saveDevice(buildManualDevice(selectedType, name, ip, mac))
+                    repository.saveDevice(buildManualDevice(selectedType, name, ip, mac, psk))
                     onDone()
                 }
             },
@@ -354,17 +389,23 @@ private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
     }
 }
 
-private fun buildManualDevice(type: DeviceType, name: String, ip: String, mac: String): RemoteDevice = when (type) {
-    DeviceType.WOL -> RemoteDevice(name = name, type = type, mac = mac.trim())
-    DeviceType.ROKU -> RemoteDevice(name = name, type = type, ip = ip.trim(), port = 8060)
-    else -> RemoteDevice(name = name, type = type, ip = ip.trim())
-}
+private fun buildManualDevice(type: DeviceType, name: String, ip: String, mac: String, psk: String): RemoteDevice =
+    when (type) {
+        DeviceType.WOL -> RemoteDevice(name = name, type = type, mac = mac.trim())
+        DeviceType.ROKU -> RemoteDevice(name = name, type = type, ip = ip.trim(), port = 8060)
+        DeviceType.SONY_BRAVIA -> RemoteDevice(name = name, type = type, ip = ip.trim(), sonyPsk = psk.trim())
+        else -> RemoteDevice(name = name, type = type, ip = ip.trim())
+    }
 
 private fun shortLabel(type: DeviceType): String = when (type) {
     DeviceType.IR -> "Infrarrojo"
     DeviceType.ROKU -> "Roku"
     DeviceType.LG_WEBOS -> "LG Smart TV"
     DeviceType.SAMSUNG -> "Samsung Smart TV"
+    DeviceType.SONY_BRAVIA -> "Sony Bravia"
+    DeviceType.VIZIO -> "Vizio SmartCast"
+    DeviceType.PHILIPS -> "Philips (no Android)"
+    DeviceType.PANASONIC -> "Panasonic Viera"
     DeviceType.ANDROID_TV -> "Android TV / TV Box"
     DeviceType.WOL -> "Encender por red"
 }

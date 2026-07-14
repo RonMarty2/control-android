@@ -14,7 +14,7 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
 
-data class ScanResult(val ip: String, val guessedType: DeviceType)
+data class ScanResult(val ip: String, val guessedType: DeviceType, val port: Int)
 
 /**
  * Best-effort discovery: probes every host on the phone's /24 Wi-Fi subnet
@@ -36,17 +36,22 @@ class NetworkScanner(private val context: Context) {
             async {
                 semaphore.withPermit {
                     val ip = "$baseIp.$host"
-                    detectDeviceType(ip, timeoutMs)?.let { ScanResult(ip, it) }
+                    detectDeviceType(ip, timeoutMs)?.let { (type, port) -> ScanResult(ip, type, port) }
                 }
             }
         }.awaitAll().filterNotNull()
     }
 
-    private fun detectDeviceType(ip: String, timeoutMs: Int): DeviceType? = when {
-        isPortOpen(ip, 8060, timeoutMs) -> DeviceType.ROKU
-        isPortOpen(ip, 8002, timeoutMs) -> DeviceType.SAMSUNG
-        isPortOpen(ip, 3000, timeoutMs) -> DeviceType.LG_WEBOS
-        isPortOpen(ip, 6467, timeoutMs) -> DeviceType.ANDROID_TV
+    private fun detectDeviceType(ip: String, timeoutMs: Int): Pair<DeviceType, Int>? = when {
+        isPortOpen(ip, 8060, timeoutMs) -> DeviceType.ROKU to 8060
+        isPortOpen(ip, 8002, timeoutMs) -> DeviceType.SAMSUNG to 8002
+        isPortOpen(ip, 3000, timeoutMs) -> DeviceType.LG_WEBOS to 3000
+        isPortOpen(ip, 6467, timeoutMs) -> DeviceType.ANDROID_TV to 6467
+        isPortOpen(ip, 7345, timeoutMs) -> DeviceType.VIZIO to 7345
+        isPortOpen(ip, 9000, timeoutMs) -> DeviceType.VIZIO to 9000
+        isPortOpen(ip, 1925, timeoutMs) -> DeviceType.PHILIPS to 1925
+        isPortOpen(ip, 55000, timeoutMs) -> DeviceType.PANASONIC to 55000
+        isPortOpen(ip, 80, timeoutMs) -> DeviceType.SONY_BRAVIA to 80
         else -> null
     }
 
