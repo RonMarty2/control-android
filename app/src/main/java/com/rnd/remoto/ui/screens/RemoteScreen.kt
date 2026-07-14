@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
@@ -23,10 +24,12 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -44,6 +47,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
@@ -159,42 +164,74 @@ private fun NetworkRemoteBody(controller: RemoteController?, onResult: (Result<U
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
     }
 
-    IconButton(onClick = { press(RemoteCommand.POWER) }) {
-        Icon(Icons.Filled.PowerSettingsNew, contentDescription = "Encender/Apagar", modifier = Modifier.height(40.dp))
-    }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceEvenly
+    ) {
+        RemoteIconButton(
+            icon = Icons.Filled.PowerSettingsNew,
+            contentDescription = "Encender/Apagar",
+            size = 76.dp,
+            onClick = { press(RemoteCommand.POWER) }
+        )
 
-    DPad(onUp = { press(RemoteCommand.UP) }, onDown = { press(RemoteCommand.DOWN) },
-        onLeft = { press(RemoteCommand.LEFT) }, onRight = { press(RemoteCommand.RIGHT) },
-        onCenter = { press(RemoteCommand.SELECT) })
+        BigDPad(
+            onUp = { press(RemoteCommand.UP) }, onDown = { press(RemoteCommand.DOWN) },
+            onLeft = { press(RemoteCommand.LEFT) }, onRight = { press(RemoteCommand.RIGHT) },
+            onCenter = { press(RemoteCommand.SELECT) }
+        )
 
-    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        IconButton(onClick = { press(RemoteCommand.BACK) }) { Text("Volver") }
-        IconButton(onClick = { press(RemoteCommand.HOME) }) { Icon(Icons.Filled.Home, contentDescription = "Inicio") }
-        IconButton(onClick = { press(RemoteCommand.PLAY_PAUSE) }) { Icon(Icons.Filled.Pause, contentDescription = "Play/Pausa") }
-    }
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            RemoteTextButton(text = "Volver", onClick = { press(RemoteCommand.BACK) })
+            RemoteIconButton(Icons.Filled.Home, "Inicio", onClick = { press(RemoteCommand.HOME) })
+            RemoteIconButton(Icons.Filled.Pause, "Play/Pausa", onClick = { press(RemoteCommand.PLAY_PAUSE) })
+        }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        IconButton(onClick = { press(RemoteCommand.VOLUME_DOWN) }) { Icon(Icons.Filled.VolumeDown, contentDescription = "Bajar volumen") }
-        IconButton(onClick = { press(RemoteCommand.MUTE) }) { Icon(Icons.Filled.VolumeOff, contentDescription = "Silencio") }
-        IconButton(onClick = { press(RemoteCommand.VOLUME_UP) }) { Icon(Icons.Filled.VolumeUp, contentDescription = "Subir volumen") }
-    }
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            RemoteIconButton(Icons.Filled.VolumeDown, "Bajar volumen", onClick = { press(RemoteCommand.VOLUME_DOWN) })
+            RemoteIconButton(Icons.Filled.VolumeOff, "Silencio", onClick = { press(RemoteCommand.MUTE) })
+            RemoteIconButton(Icons.Filled.VolumeUp, "Subir volumen", onClick = { press(RemoteCommand.VOLUME_UP) })
+        }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        OutlinedButton(onClick = { press(RemoteCommand.CHANNEL_DOWN) }) { Text("CH -") }
-        OutlinedButton(onClick = { press(RemoteCommand.CHANNEL_UP) }) { Text("CH +") }
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            RemoteTextButton(text = "CH -", onClick = { press(RemoteCommand.CHANNEL_DOWN) })
+            RemoteTextButton(text = "CH +", onClick = { press(RemoteCommand.CHANNEL_UP) })
+        }
     }
 }
 
 @Composable
-private fun DPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onUp) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Arriba") }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            IconButton(onClick = onLeft) { Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "Izquierda") }
-            OutlinedButton(onClick = onCenter) { Text("OK") }
-            IconButton(onClick = onRight) { Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Derecha") }
+private fun RemoteIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    size: Dp = 64.dp
+) {
+    FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(size)) {
+        Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(size / 2))
+    }
+}
+
+@Composable
+private fun RemoteTextButton(text: String, onClick: () -> Unit) {
+    FilledTonalButton(onClick = onClick, modifier = Modifier.height(64.dp)) {
+        Text(text, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun BigDPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 72.dp)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            RemoteIconButton(Icons.Filled.KeyboardArrowLeft, "Izquierda", onClick = onLeft, size = 72.dp)
+            FilledIconButton(onClick = onCenter, modifier = Modifier.size(84.dp)) {
+                Text("OK", style = MaterialTheme.typography.titleLarge)
+            }
+            RemoteIconButton(Icons.Filled.KeyboardArrowRight, "Derecha", onClick = onRight, size = 72.dp)
         }
-        IconButton(onClick = onDown) { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Abajo") }
+        RemoteIconButton(Icons.Filled.KeyboardArrowDown, "Abajo", onClick = onDown, size = 72.dp)
     }
 }
 
