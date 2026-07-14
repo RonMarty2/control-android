@@ -1,9 +1,7 @@
 package com.rnd.remoto.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -72,8 +70,9 @@ import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
 import com.rnd.remoto.network.VizioPairingClient
 import com.rnd.remoto.premium.PremiumRepository
 import java.util.UUID
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -232,13 +231,14 @@ private fun RemoteIconButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val containerColor = if (isPressed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondaryContainer
+    val scope = rememberCoroutineScope()
 
     Box(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
             .background(containerColor)
-            .repeatingClickable(interactionSource = interactionSource, onClick = onClick),
+            .repeatingClickable(interactionSource = interactionSource, scope = scope, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -256,31 +256,31 @@ private fun RemoteIconButton(
  */
 private fun Modifier.repeatingClickable(
     interactionSource: MutableInteractionSource,
+    scope: CoroutineScope,
     maxDelayMillis: Long = 400,
     minDelayMillis: Long = 80,
     delayDecayFactor: Float = 0.25f,
     onClick: () -> Unit
 ): Modifier = this.pointerInput(interactionSource) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        val press = PressInteraction.Press(down.position)
-        coroutineScope {
-            val heldButtonJob = launch {
+    detectTapGestures(
+        onPress = { offset ->
+            val press = PressInteraction.Press(offset)
+            val heldButtonJob = scope.launch {
                 interactionSource.emit(press)
                 var currentDelayMillis = maxDelayMillis
                 onClick()
-                while (true) {
+                while (isActive) {
                     delay(currentDelayMillis)
                     onClick()
                     currentDelayMillis = (currentDelayMillis - (currentDelayMillis * delayDecayFactor).toLong())
                         .coerceAtLeast(minDelayMillis)
                 }
             }
-            waitForUpOrCancellation()
+            tryAwaitRelease()
             heldButtonJob.cancel()
+            interactionSource.emit(PressInteraction.Release(press))
         }
-        interactionSource.emit(PressInteraction.Release(press))
-    }
+    )
 }
 
 @Composable
