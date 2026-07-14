@@ -233,7 +233,11 @@ private fun IrRemoteBody(
                         if (code.isNullOrBlank()) {
                             editingKey = key
                         } else {
-                            irController.sendHexPair(code)
+                            irController.sendHexPair(code).onFailure {
+                                onError(it.message ?: "No se pudo enviar la señal IR")
+                            }.onSuccess {
+                                onError("Señal IR enviada (código $code)")
+                            }
                         }
                     }) {
                         Text(label)
