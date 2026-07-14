@@ -28,6 +28,7 @@ class IrController(context: Context) {
         )
         mgr.transmit(NecEncoder.CARRIER_FREQUENCY_HZ, pattern)
         Log.d(TAG, "transmit() retornó sin excepción")
+        Unit
     }.onFailure {
         Log.e(TAG, "Falló el envío IR", it)
     }
