@@ -9,15 +9,20 @@ import androidx.navigation.navArgument
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.RemoteControllerFactory
+import com.rnd.remoto.premium.BillingManager
+import com.rnd.remoto.premium.PremiumRepository
 import com.rnd.remoto.ui.screens.AddDeviceScreen
 import com.rnd.remoto.ui.screens.HomeScreen
 import com.rnd.remoto.ui.screens.RemoteScreen
+import com.rnd.remoto.ui.screens.WallpaperScreen
 
 @Composable
 fun AppNavHost(
     repository: DeviceRepository,
     irController: IrController,
-    controllerFactory: RemoteControllerFactory
+    controllerFactory: RemoteControllerFactory,
+    premiumRepository: PremiumRepository,
+    billingManager: BillingManager
 ) {
     val navController = rememberNavController()
 
@@ -26,7 +31,8 @@ fun AppNavHost(
             HomeScreen(
                 repository = repository,
                 onAddDevice = { navController.navigate("add_device") },
-                onOpenDevice = { id -> navController.navigate("remote/$id") }
+                onOpenDevice = { id -> navController.navigate("remote/$id") },
+                onOpenWallpaper = { navController.navigate("wallpaper") }
             )
         }
         composable("add_device") {
@@ -46,9 +52,17 @@ fun AppNavHost(
                     repository = repository,
                     irController = irController,
                     controllerFactory = controllerFactory,
+                    premiumRepository = premiumRepository,
                     onBack = { navController.popBackStack() }
                 )
             }
+        }
+        composable("wallpaper") {
+            WallpaperScreen(
+                premiumRepository = premiumRepository,
+                billingManager = billingManager,
+                onBack = { navController.popBackStack() }
+            )
         }
     }
 }

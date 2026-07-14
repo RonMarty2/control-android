@@ -54,6 +54,7 @@ import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
 import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
 import com.rnd.remoto.network.VizioPairingClient
+import com.rnd.remoto.premium.PremiumRepository
 import java.util.UUID
 import kotlinx.coroutines.launch
 
@@ -64,12 +65,15 @@ fun RemoteScreen(
     repository: DeviceRepository,
     irController: IrController,
     controllerFactory: RemoteControllerFactory,
+    premiumRepository: PremiumRepository,
     onBack: () -> Unit
 ) {
     val devices by repository.devices.collectAsState(initial = emptyList())
     val device = devices.find { it.id == deviceId }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(deviceId) { premiumRepository.setLastUsedDeviceId(deviceId) }
 
     Scaffold(
         topBar = {

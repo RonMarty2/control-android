@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.SettingsRemote
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,13 +51,23 @@ private val CATEGORY_ORDER = listOf(
 fun HomeScreen(
     repository: DeviceRepository,
     onAddDevice: () -> Unit,
-    onOpenDevice: (String) -> Unit
+    onOpenDevice: (String) -> Unit,
+    onOpenWallpaper: () -> Unit
 ) {
     val devices by repository.devices.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Control Remoto") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Control Remoto") },
+                actions = {
+                    IconButton(onClick = onOpenWallpaper) {
+                        Icon(Icons.Default.Wallpaper, contentDescription = "Fondo de pantalla")
+                    }
+                }
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = onAddDevice) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar dispositivo")
