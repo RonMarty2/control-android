@@ -106,7 +106,8 @@ class LockScreenControlsService : Service() {
             .setContentTitle("Control Remoto")
             .setContentText("Controles rápidos del último dispositivo usado")
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColorized(true)
             .setColor(BRAND_COLOR)
@@ -122,7 +123,13 @@ class LockScreenControlsService : Service() {
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
-            val channel = NotificationChannel(CHANNEL_ID, "Controles rápidos", NotificationManager.IMPORTANCE_LOW)
+            // IMPORTANCE_DEFAULT en vez de LOW: con LOW, Android agrupa la notificación detrás de
+            // un "deslizar para ver más" en la pantalla de bloqueo en vez de mostrarla directamente.
+            // Se silencia sonido/vibración a mano para que igual sea silenciosa.
+            val channel = NotificationChannel(CHANNEL_ID, "Controles rápidos", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
             manager.createNotificationChannel(channel)
         }
     }
@@ -140,7 +147,10 @@ class LockScreenControlsService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        private const val CHANNEL_ID = "lock_screen_controls"
+        // v2: los canales de notificación son inmutables una vez creados (Android ignora cambios
+        // de importancia sobre un canal ya existente), así que un ID nuevo fuerza a crear uno con
+        // la importancia correcta en los celulares que ya tenían instalada una versión vieja.
+        private const val CHANNEL_ID = "lock_screen_controls_v2"
         private const val NOTIFICATION_ID = 42
         private const val BRAND_COLOR = 0xFF0F766E.toInt()
         const val ACTION_POWER = "com.rnd.remoto.action.POWER"
