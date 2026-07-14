@@ -49,10 +49,13 @@ class LockScreenControlsService : Service() {
 
         mediaSession = MediaSessionCompat(this, "ControlRemotoLockScreen").apply {
             isActive = true
+            // No declaramos ACTION_PLAY_PAUSE ni un estado de reproducción real: esto no es un
+            // reproductor. Si lo hiciéramos, Android dibuja un botón de pausa gigante y una barra
+            // de progreso falsa (00:00 a 00:00) encima de nuestros botones, que es justo lo que
+            // se veía feo. Con STATE_NONE y sin acciones, sólo se muestran nuestros propios botones.
             setPlaybackState(
                 PlaybackStateCompat.Builder()
-                    .setActions(PlaybackStateCompat.ACTION_PLAY_PAUSE)
-                    .setState(PlaybackStateCompat.STATE_PAUSED, 0, 1f)
+                    .setState(PlaybackStateCompat.STATE_NONE, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
                     .build()
             )
         }
@@ -114,6 +117,8 @@ class LockScreenControlsService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setColorized(true)
+            .setColor(BRAND_COLOR)
             .addAction(action(ACTION_POWER, "Power", R.drawable.ic_notif_power))
             .addAction(action(ACTION_VOLUME_DOWN, "Vol -", R.drawable.ic_notif_vol_down))
             .addAction(action(ACTION_VOLUME_UP, "Vol +", R.drawable.ic_notif_vol_up))
@@ -157,6 +162,7 @@ class LockScreenControlsService : Service() {
     companion object {
         private const val CHANNEL_ID = "lock_screen_controls"
         private const val NOTIFICATION_ID = 42
+        private const val BRAND_COLOR = 0xFF0F766E.toInt()
         const val ACTION_POWER = "com.rnd.remoto.action.POWER"
         const val ACTION_VOLUME_UP = "com.rnd.remoto.action.VOLUME_UP"
         const val ACTION_VOLUME_DOWN = "com.rnd.remoto.action.VOLUME_DOWN"
