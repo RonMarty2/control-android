@@ -22,6 +22,7 @@ import com.rnd.remoto.lockscreen.LockScreenControlsService
 import com.rnd.remoto.network.RemoteControllerFactory
 import com.rnd.remoto.network.androidtv.AndroidTvIdentity
 import com.rnd.remoto.premium.BillingManager
+import com.rnd.remoto.premium.DebugConfig
 import com.rnd.remoto.premium.PremiumRepository
 import com.rnd.remoto.ui.AppNavHost
 import com.rnd.remoto.ui.theme.ControlRemotoTheme
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
     private fun restartLockScreenServiceIfEnabled(premiumRepository: PremiumRepository) {
         lifecycleScope.launch {
             val state = premiumRepository.state.first()
-            if (state.isPremium && state.lockScreenControlsEnabled) {
+            if ((state.isPremium || DebugConfig.FORCE_PREMIUM) && state.lockScreenControlsEnabled) {
                 ContextCompat.startForegroundService(
                     this@MainActivity,
                     Intent(this@MainActivity, LockScreenControlsService::class.java)
