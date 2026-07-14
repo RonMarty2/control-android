@@ -1,7 +1,11 @@
 package com.rnd.remoto.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -42,6 +47,17 @@ import com.rnd.remoto.wallpaper.PhotoWallpaperSetter
 import com.rnd.remoto.wallpaper.VideoWallpaperLauncher
 import com.rnd.remoto.wallpaper.WallpaperFiles
 import kotlinx.coroutines.launch
+
+private fun openAppNotificationSettings(context: Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+    } else {
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", context.packageName, null))
+    }
+    context.startActivity(intent)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -173,6 +189,20 @@ fun WallpaperScreen(
                             "pantalla de bloqueo, para el último dispositivo que usaste.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (currentState.lockScreenControlsEnabled) {
+                        Text(
+                            "Si no ves los controles en la pantalla bloqueada (solo al desbloquear), " +
+                                "algunos celulares necesitan que actives \"mostrar contenido\" en los " +
+                                "ajustes de notificaciones de esta app.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedButton(
+                            onClick = { openAppNotificationSettings(context) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Abrir ajustes de notificaciones")
+                        }
+                    }
                 }
             }
 
