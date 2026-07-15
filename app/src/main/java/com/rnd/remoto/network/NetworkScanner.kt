@@ -42,6 +42,21 @@ class NetworkScanner(private val context: Context) {
         }.awaitAll().filterNotNull()
     }
 
+    /** Every host on the subnet with [port] open, regardless of device type. Used to re-find a
+     * paired device that changed IP (e.g. after a DHCP lease renewal) without a full re-pair. */
+    suspend fun findHostsWithOpenPort(port: Int, timeoutMs: Int = 300): List<String> = withContext(Dispatchers.IO) {
+        val baseIp = localSubnetPrefix() ?: return@withContext emptyList()
+        val semaphore = Semaphore(48)
+        (1..254).map { host ->
+            async {
+                semaphore.withPermit {
+                    val ip = "$baseIp.$host"
+                    if (isPortOpen(ip, port, timeoutMs)) ip else null
+                }
+            }
+        }.awaitAll().filterNotNull()
+    }
+
     private fun detectDeviceType(ip: String, timeoutMs: Int): Pair<DeviceType, Int>? = when {
         isPortOpen(ip, 8060, timeoutMs) -> DeviceType.ROKU to 8060
         isPortOpen(ip, 8002, timeoutMs) -> DeviceType.SAMSUNG to 8002

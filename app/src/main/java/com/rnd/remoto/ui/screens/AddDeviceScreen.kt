@@ -52,9 +52,15 @@ import com.rnd.remoto.data.RemoteDevice
 import com.rnd.remoto.data.category
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.ScanResult
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private enum class AddStep { CHOOSE, IR, WIFI }
+
+/** If a device of the same type and name already exists, reuse its id so saving updates it in
+ * place instead of leaving a stale duplicate behind (e.g. re-adding a TV whose IP changed). */
+private suspend fun existingIdFor(repository: DeviceRepository, type: DeviceType, name: String): String? =
+    repository.devices.first().firstOrNull { it.type == type && it.name.equals(name, ignoreCase = true) }?.id
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -250,8 +256,10 @@ private fun WifiDiscoverStep(repository: DeviceRepository, onDone: () -> Unit) {
             onDismiss = { pendingResult = null },
             onConfirm = { name ->
                 scope.launch {
+                    val existingId = existingIdFor(repository, result.guessedType, name)
                     repository.saveDevice(
                         RemoteDevice(
+                            id = existingId ?: java.util.UUID.randomUUID().toString(),
                             name = name,
                             type = result.guessedType,
                             ip = result.ip,
@@ -377,7 +385,8 @@ private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
         Button(
             onClick = {
                 scope.launch {
-                    repository.saveDevice(buildManualDevice(selectedType, name, ip, mac, psk))
+                    val existingId = existingIdFor(repository, selectedType, name)
+                    repository.saveDevice(buildManualDevice(selectedType, name, ip, mac, psk, existingId))
                     onDone()
                 }
             },
@@ -389,13 +398,22 @@ private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
     }
 }
 
-private fun buildManualDevice(type: DeviceType, name: String, ip: String, mac: String, psk: String): RemoteDevice =
-    when (type) {
-        DeviceType.WOL -> RemoteDevice(name = name, type = type, mac = mac.trim())
-        DeviceType.ROKU -> RemoteDevice(name = name, type = type, ip = ip.trim(), port = 8060)
-        DeviceType.SONY_BRAVIA -> RemoteDevice(name = name, type = type, ip = ip.trim(), sonyPsk = psk.trim())
-        else -> RemoteDevice(name = name, type = type, ip = ip.trim())
+private fun buildManualDevice(
+    type: DeviceType,
+    name: String,
+    ip: String,
+    mac: String,
+    psk: String,
+    existingId: String?
+): RemoteDevice {
+    val id = existingId ?: java.util.UUID.randomUUID().toString()
+    return when (type) {
+        DeviceType.WOL -> RemoteDevice(id = id, name = name, type = type, mac = mac.trim())
+        DeviceType.ROKU -> RemoteDevice(id = id, name = name, type = type, ip = ip.trim(), port = 8060)
+        DeviceType.SONY_BRAVIA -> RemoteDevice(id = id, name = name, type = type, ip = ip.trim(), sonyPsk = psk.trim())
+        else -> RemoteDevice(id = id, name = name, type = type, ip = ip.trim())
     }
+}
 
 private fun shortLabel(type: DeviceType): String = when (type) {
     DeviceType.IR -> "Infrarrojo"

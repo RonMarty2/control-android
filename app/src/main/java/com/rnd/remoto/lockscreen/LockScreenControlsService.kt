@@ -50,7 +50,7 @@ class LockScreenControlsService : Service() {
         super.onCreate()
         repository = DeviceRepository(applicationContext)
         premiumRepository = PremiumRepository(applicationContext)
-        controllerFactory = RemoteControllerFactory(repository, scope)
+        controllerFactory = RemoteControllerFactory(applicationContext, repository, scope)
 
         ensureChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

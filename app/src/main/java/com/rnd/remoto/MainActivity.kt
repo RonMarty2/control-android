@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
             ControlRemotoTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val scope = rememberCoroutineScope()
-                    val controllerFactory = remember { RemoteControllerFactory(repository, scope) }
+                    val controllerFactory = remember { RemoteControllerFactory(applicationContext, repository, scope) }
                     AppNavHost(
                         repository = repository,
                         irController = irController,

@@ -1,6 +1,8 @@
 package com.rnd.remoto.network.androidtv
 
+import android.content.Context
 import android.util.Log
+import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
 import kotlinx.coroutines.CompletableDeferred
@@ -20,10 +22,17 @@ private const val TAG = "AndroidTvRemote"
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
  * [AndroidTvPairingClient] - this class presents the same client certificate the TV
  * approved during pairing, which is what lets it skip pairing on reconnect.
+ *
+ * If the saved [ip] no longer answers (e.g. the TV got a new IP from the router's DHCP), and a
+ * [context] was provided, this rescans the local network for any host that still accepts our
+ * client cert on [port] and switches to it automatically — no re-pairing needed, since the TV
+ * already trusts this app's certificate regardless of which IP it's reached at.
  */
 class AndroidTvRemoteClient(
-    private val ip: String,
-    private val port: Int = 6466
+    private var ip: String,
+    private val port: Int = 6466,
+    private val context: Context? = null,
+    private val onIpChanged: ((String) -> Unit)? = null
 ) : RemoteController {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -32,6 +41,29 @@ class AndroidTvRemoteClient(
     private var readLoopJob: Job? = null
     private var ready: CompletableDeferred<Boolean>? = null
 
+    private fun openHandshakedSocket(targetIp: String): SSLSocket? = try {
+        val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory.createSocket(targetIp, port) as SSLSocket
+        sslSocket.enabledProtocols = sslSocket.supportedProtocols
+        sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
+        sslSocket.startHandshake()
+        sslSocket
+    } catch (e: Exception) {
+        Log.d(TAG, "No responde en $targetIp: ${e.message}")
+        null
+    }
+
+    private suspend fun rediscoverIp(): String? {
+        val ctx = context ?: return null
+        Log.d(TAG, "La IP guardada ($ip) no responde, buscando el Android TV en la red...")
+        val candidates = NetworkScanner(ctx).findHostsWithOpenPort(port).filter { it != ip }
+        for (candidate in candidates) {
+            val probeSocket = openHandshakedSocket(candidate) ?: continue
+            runCatching { probeSocket.close() }
+            return candidate
+        }
+        return null
+    }
+
     private suspend fun ensureConnected(): Boolean {
         ready?.let { existing ->
             if (existing.await()) return true
@@ -39,18 +71,24 @@ class AndroidTvRemoteClient(
 
         val readyDeferred = CompletableDeferred<Boolean>()
         ready = readyDeferred
-        try {
-            val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory.createSocket(ip, port) as SSLSocket
-            sslSocket.enabledProtocols = sslSocket.supportedProtocols
-            sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
-            sslSocket.startHandshake()
-            socket = sslSocket
-        } catch (e: Exception) {
-            Log.e(TAG, "No se pudo conectar al Android TV", e)
+
+        var sslSocket = openHandshakedSocket(ip)
+        if (sslSocket == null) {
+            val rediscoveredIp = rediscoverIp()
+            sslSocket = rediscoveredIp?.let { openHandshakedSocket(it) }
+            if (sslSocket != null) {
+                ip = rediscoveredIp!!
+                onIpChanged?.invoke(rediscoveredIp)
+            }
+        }
+
+        if (sslSocket == null) {
+            Log.e(TAG, "No se pudo conectar al Android TV")
             readyDeferred.complete(false)
             return false
         }
 
+        socket = sslSocket
         readLoopJob = scope.launch { readLoop(readyDeferred) }
         return readyDeferred.await()
     }

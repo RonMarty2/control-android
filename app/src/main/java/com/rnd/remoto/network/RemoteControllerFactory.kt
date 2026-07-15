@@ -1,5 +1,6 @@
 package com.rnd.remoto.network
 
+import android.content.Context
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
@@ -9,6 +10,7 @@ import kotlinx.coroutines.launch
 
 /** Builds the right network client for a saved device and persists tokens/keys it learns. */
 class RemoteControllerFactory(
+    private val context: Context,
     private val repository: DeviceRepository,
     private val scope: CoroutineScope
 ) {
@@ -34,7 +36,12 @@ class RemoteControllerFactory(
 
             DeviceType.ANDROID_TV -> {
                 if (!device.androidTvPaired) return null // RemoteScreen must pair first
-                AndroidTvRemoteClient(ip = device.ip ?: return null)
+                AndroidTvRemoteClient(
+                    ip = device.ip ?: return null,
+                    context = context.applicationContext
+                ) { newIp ->
+                    scope.launch { repository.saveDevice(device.copy(ip = newIp)) }
+                }
             }
 
             DeviceType.SONY_BRAVIA -> SonyBraviaClient(
