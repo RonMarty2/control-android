@@ -11,6 +11,7 @@ object RemoteMessages {
     const val FIELD_REMOTE_PING_RESPONSE = 9
     const val FIELD_REMOTE_KEY_INJECT = 10
     const val FIELD_REMOTE_START = 40
+    const val FIELD_REMOTE_APP_LINK_LAUNCH_REQUEST = 90
 
     // Feature bitmask: PING(1) | KEY(2) | POWER(32) | VOLUME(64) | APP_LINK(512)
     const val ACTIVE_FEATURES = 1 or 2 or 32 or 64 or 512
@@ -46,5 +47,12 @@ object RemoteMessages {
             writeVarintField(2, direction)
         }.toByteArray()
         return ProtoWriter().apply { writeMessageField(FIELD_REMOTE_KEY_INJECT, inject) }.toByteArray()
+    }
+
+    /** [appLink] can be a package name (e.g. "org.jellyfin.androidtv") or a deep-link URL
+     * (e.g. "https://www.youtube.com") - the TV resolves either into launching the matching app. */
+    fun appLinkLaunchRequest(appLink: String): ByteArray {
+        val request = ProtoWriter().apply { writeStringField(1, appLink) }.toByteArray()
+        return ProtoWriter().apply { writeMessageField(FIELD_REMOTE_APP_LINK_LAUNCH_REQUEST, request) }.toByteArray()
     }
 }

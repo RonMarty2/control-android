@@ -142,7 +142,7 @@ fun RemoteScreen(
                     DisposableEffect(controller) {
                         onDispose { controller?.close() }
                     }
-                    NetworkRemoteBody(controller = controller, onResult = ::report)
+                    NetworkRemoteBody(controller = controller, onResult = ::report, showAppShortcuts = true)
                 }
                 DeviceType.VIZIO -> if (device.vizioAuthToken == null) {
                     VizioPairingBody(
@@ -170,10 +170,17 @@ fun RemoteScreen(
 }
 
 @Composable
-private fun NetworkRemoteBody(controller: RemoteController?, onResult: (Result<Unit>) -> Unit) {
+private fun NetworkRemoteBody(
+    controller: RemoteController?,
+    onResult: (Result<Unit>) -> Unit,
+    showAppShortcuts: Boolean = false
+) {
     val scope = rememberCoroutineScope()
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
+    }
+    fun launchApp(appLink: String) {
+        scope.launch { onResult(controller?.launchApp(appLink) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
     }
 
     Column(
@@ -209,6 +216,10 @@ private fun NetworkRemoteBody(controller: RemoteController?, onResult: (Result<U
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
             RemoteTextButton(text = "CH -", onClick = { press(RemoteCommand.CHANNEL_DOWN) })
             RemoteTextButton(text = "CH +", onClick = { press(RemoteCommand.CHANNEL_UP) })
+        }
+
+        if (showAppShortcuts) {
+            RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
         }
     }
 }

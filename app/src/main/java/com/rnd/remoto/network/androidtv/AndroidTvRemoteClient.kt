@@ -137,6 +137,15 @@ class AndroidTvRemoteClient(
         }
     }
 
+    override suspend fun launchApp(appLink: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!ensureConnected()) {
+                error("No se pudo conectar al Android TV. Revisá que esté encendido, en la misma red, y ya emparejado.")
+            }
+            writeMessage(RemoteMessages.appLinkLaunchRequest(appLink))
+        }
+    }
+
     override fun close() {
         readLoopJob?.cancel()
         runCatching { socket?.close() }
