@@ -37,6 +37,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -63,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
+import com.rnd.remoto.ir.CommonPowerCodes
 import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
@@ -72,6 +74,7 @@ import com.rnd.remoto.network.VizioPairingClient
 import com.rnd.remoto.premium.PremiumRepository
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -271,32 +274,107 @@ private fun NetworkRemoteBody(
     }
 
     if (showIrPowerDialog) {
-        var text by remember { mutableStateOf(device.irCodes["POWER"] ?: "") }
-        AlertDialog(
-            onDismissRequest = { showIrPowerDialog = false },
-            title = { Text("Código IR para encender") },
-            text = {
-                Column {
-                    Text(
-                        "Si este equipo solo prende por infrarrojo cuando está totalmente " +
-                            "apagado (no responde por Wi-Fi en ese estado), cargá acá el código " +
-                            "NEC de encendido de su control físico original. Formato: " +
-                            "direccion,comando en hexadecimal. Ej: 07,02"
-                    )
-                    OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    scope.launch { repository.saveDevice(device.copy(irCodes = device.irCodes + ("POWER" to text.trim()))) }
-                    showIrPowerDialog = false
-                }) { Text("Guardar") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showIrPowerDialog = false }) { Text("Cancelar") }
-            }
+        IrPowerCodeDialog(
+            device = device,
+            repository = repository,
+            irController = irController,
+            onDismiss = { showIrPowerDialog = false }
         )
     }
+}
+
+@Composable
+private fun IrPowerCodeDialog(
+    device: RemoteDevice,
+    repository: DeviceRepository,
+    irController: IrController,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf(device.irCodes["POWER"] ?: "") }
+    var isScanning by remember { mutableStateOf(false) }
+    var scanIndex by remember { mutableStateOf(0) }
+    var scanJob by remember { mutableStateOf<Job?>(null) }
+
+    fun stopScan() {
+        scanJob?.cancel()
+        scanJob = null
+        isScanning = false
+    }
+
+    fun startScan() {
+        isScanning = true
+        scanIndex = 0
+        scanJob = scope.launch {
+            while (isActive && scanIndex < CommonPowerCodes.GENERIC_TV_BOX.size) {
+                irController.sendHexPair(CommonPowerCodes.GENERIC_TV_BOX[scanIndex])
+                delay(1500)
+                scanIndex++
+            }
+            isScanning = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { stopScan(); onDismiss() },
+        title = { Text("Código IR para encender") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Si este equipo solo prende por infrarrojo cuando está totalmente apagado " +
+                        "(no responde por Wi-Fi en ese estado), cargá acá el código NEC de " +
+                        "encendido de su control físico original (direccion,comando en " +
+                        "hexadecimal, ej: 07,02), o dejá que la app pruebe códigos comunes de " +
+                        "cajas TV genéricas."
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Código (ej: 07,02)") },
+                    enabled = !isScanning,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (!isScanning) {
+                    OutlinedButton(onClick = { startScan() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Probar códigos automáticamente")
+                    }
+                } else {
+                    Text(
+                        "Probando código ${scanIndex + 1} de ${CommonPowerCodes.GENERIC_TV_BOX.size}... " +
+                            "Mirá si el equipo prendió."
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                text = CommonPowerCodes.GENERIC_TV_BOX[scanIndex.coerceIn(0, CommonPowerCodes.GENERIC_TV_BOX.size - 1)]
+                                stopScan()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("¡Prendió! Usar este")
+                        }
+                        OutlinedButton(onClick = { stopScan() }, modifier = Modifier.weight(1f)) {
+                            Text("Detener")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = text.isNotBlank(),
+                onClick = {
+                    scope.launch { repository.saveDevice(device.copy(irCodes = device.irCodes + ("POWER" to text.trim()))) }
+                    stopScan()
+                    onDismiss()
+                }
+            ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = { stopScan(); onDismiss() }) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable
