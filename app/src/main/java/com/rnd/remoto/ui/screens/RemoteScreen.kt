@@ -42,6 +42,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -142,7 +143,14 @@ fun RemoteScreen(
                     DisposableEffect(controller) {
                         onDispose { controller?.close() }
                     }
-                    NetworkRemoteBody(controller = controller, onResult = ::report, showAppShortcuts = true)
+                    NetworkRemoteBody(
+                        device = device,
+                        controller = controller,
+                        irController = irController,
+                        repository = repository,
+                        onResult = ::report,
+                        showAppShortcuts = true
+                    )
                 }
                 DeviceType.VIZIO -> if (device.vizioAuthToken == null) {
                     VizioPairingBody(
@@ -155,14 +163,26 @@ fun RemoteScreen(
                     DisposableEffect(controller) {
                         onDispose { controller?.close() }
                     }
-                    NetworkRemoteBody(controller = controller, onResult = ::report)
+                    NetworkRemoteBody(
+                        device = device,
+                        controller = controller,
+                        irController = irController,
+                        repository = repository,
+                        onResult = ::report
+                    )
                 }
                 else -> {
                     val controller = remember(device.id) { controllerFactory.create(device) }
                     DisposableEffect(controller) {
                         onDispose { controller?.close() }
                     }
-                    NetworkRemoteBody(controller = controller, onResult = ::report)
+                    NetworkRemoteBody(
+                        device = device,
+                        controller = controller,
+                        irController = irController,
+                        repository = repository,
+                        onResult = ::report
+                    )
                 }
             }
         }
@@ -171,16 +191,36 @@ fun RemoteScreen(
 
 @Composable
 private fun NetworkRemoteBody(
+    device: RemoteDevice,
     controller: RemoteController?,
+    irController: IrController,
+    repository: DeviceRepository,
     onResult: (Result<Unit>) -> Unit,
     showAppShortcuts: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
+    var showIrPowerDialog by remember { mutableStateOf(false) }
+
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
     }
     fun launchApp(appLink: String) {
         scope.launch { onResult(controller?.launchApp(appLink) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
+    }
+    fun pressPower() {
+        scope.launch {
+            val wifiResult = controller?.send(RemoteCommand.POWER)
+                ?: Result.failure(IllegalStateException("Dispositivo no configurado"))
+            val irPowerCode = device.irCodes["POWER"]
+            // Muchos TV box/smart TV no responden por Wi-Fi cuando están totalmente apagados
+            // (el chip de red también se apaga); si falló y hay un código IR de encendido
+            // cargado, lo mandamos como respaldo - una vez prendido, todo lo demás sigue por Wi-Fi.
+            if (wifiResult.isFailure && !irPowerCode.isNullOrBlank()) {
+                onResult(irController.sendHexPair(irPowerCode))
+            } else {
+                onResult(wifiResult)
+            }
+        }
     }
 
     Column(
@@ -192,8 +232,15 @@ private fun NetworkRemoteBody(
             icon = Icons.Filled.PowerSettingsNew,
             contentDescription = "Encender/Apagar",
             size = 76.dp,
-            onClick = { press(RemoteCommand.POWER) }
+            onClick = { pressPower() }
         )
+
+        TextButton(onClick = { showIrPowerDialog = true }) {
+            Text(
+                if (device.irCodes["POWER"].isNullOrBlank()) "¿No prende por Wi-Fi? Configurar encendido por IR"
+                else "Encendido por IR configurado (editar)"
+            )
+        }
 
         BigDPad(
             onUp = { press(RemoteCommand.UP) }, onDown = { press(RemoteCommand.DOWN) },
@@ -221,6 +268,34 @@ private fun NetworkRemoteBody(
         if (showAppShortcuts) {
             RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
         }
+    }
+
+    if (showIrPowerDialog) {
+        var text by remember { mutableStateOf(device.irCodes["POWER"] ?: "") }
+        AlertDialog(
+            onDismissRequest = { showIrPowerDialog = false },
+            title = { Text("Código IR para encender") },
+            text = {
+                Column {
+                    Text(
+                        "Si este equipo solo prende por infrarrojo cuando está totalmente " +
+                            "apagado (no responde por Wi-Fi en ese estado), cargá acá el código " +
+                            "NEC de encendido de su control físico original. Formato: " +
+                            "direccion,comando en hexadecimal. Ej: 07,02"
+                    )
+                    OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch { repository.saveDevice(device.copy(irCodes = device.irCodes + ("POWER" to text.trim()))) }
+                    showIrPowerDialog = false
+                }) { Text("Guardar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showIrPowerDialog = false }) { Text("Cancelar") }
+            }
+        )
     }
 }
 
