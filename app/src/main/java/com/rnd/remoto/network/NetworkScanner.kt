@@ -42,6 +42,11 @@ class NetworkScanner(private val context: Context) {
         }.awaitAll().filterNotNull()
     }
 
+    /** Whether a specific host answers on [port] right now. Used to detect that a device just
+     * came back online (e.g. after sending it an IR power-on code) without a full subnet scan. */
+    suspend fun isReachable(ip: String, port: Int, timeoutMs: Int = 500): Boolean =
+        withContext(Dispatchers.IO) { isPortOpen(ip, port, timeoutMs) }
+
     /** Every host on the subnet with [port] open, regardless of device type. Used to re-find a
      * paired device that changed IP (e.g. after a DHCP lease renewal) without a full re-pair. */
     suspend fun findHostsWithOpenPort(port: Int, timeoutMs: Int = 300): List<String> = withContext(Dispatchers.IO) {

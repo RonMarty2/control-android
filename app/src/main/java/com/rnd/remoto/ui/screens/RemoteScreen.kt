@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
@@ -66,6 +67,7 @@ import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
 import com.rnd.remoto.ir.CommonPowerCodes
 import com.rnd.remoto.ir.IrController
+import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
@@ -283,6 +285,18 @@ private fun NetworkRemoteBody(
     }
 }
 
+private fun controlPortFor(device: RemoteDevice): Int? = when (device.type) {
+    DeviceType.ANDROID_TV -> 6466
+    DeviceType.ROKU -> device.port ?: 8060
+    DeviceType.SAMSUNG -> device.port ?: 8002
+    DeviceType.LG_WEBOS -> device.port ?: 3000
+    DeviceType.VIZIO -> device.port ?: 7345
+    DeviceType.SONY_BRAVIA -> 80
+    DeviceType.PHILIPS -> 1925
+    DeviceType.PANASONIC -> 55000
+    else -> null
+}
+
 @Composable
 private fun IrPowerCodeDialog(
     device: RemoteDevice,
@@ -290,10 +304,12 @@ private fun IrPowerCodeDialog(
     irController: IrController,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf(device.irCodes["POWER"] ?: "") }
     var isScanning by remember { mutableStateOf(false) }
     var scanIndex by remember { mutableStateOf(0) }
+    var autoDetected by remember { mutableStateOf(false) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
 
     fun stopScan() {
@@ -304,11 +320,37 @@ private fun IrPowerCodeDialog(
 
     fun startScan() {
         isScanning = true
+        autoDetected = false
         scanIndex = 0
+        val ip = device.ip
+        val port = controlPortFor(device)
+        val scanner = if (ip != null && port != null) NetworkScanner(context) else null
+
         scanJob = scope.launch {
             while (isActive && scanIndex < CommonPowerCodes.GENERIC_TV_BOX.size) {
                 irController.sendHexPair(CommonPowerCodes.GENERIC_TV_BOX[scanIndex])
-                delay(1500)
+
+                if (scanner != null && ip != null && port != null) {
+                    // Le damos tiempo a la caja para terminar de arrancar y que su red
+                    // responda; si aparece en la red, ese código funcionó - paramos solos.
+                    var foundOnNetwork = false
+                    for (attempt in 1..10) {
+                        if (!isActive) break
+                        delay(3000)
+                        if (scanner.isReachable(ip, port)) {
+                            foundOnNetwork = true
+                            break
+                        }
+                    }
+                    if (foundOnNetwork) {
+                        text = CommonPowerCodes.GENERIC_TV_BOX[scanIndex]
+                        autoDetected = true
+                        isScanning = false
+                        return@launch
+                    }
+                } else {
+                    delay(1500)
+                }
                 scanIndex++
             }
             isScanning = false
@@ -335,14 +377,27 @@ private fun IrPowerCodeDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                if (!isScanning) {
+                if (autoDetected) {
+                    Text(
+                        "¡Listo! Detectamos que el equipo respondió en la red después de este " +
+                            "código, así que probablemente sea el correcto.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else if (!isScanning) {
                     OutlinedButton(onClick = { startScan() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Probar códigos automáticamente")
                     }
+                    Text(
+                        "Apagá el equipo del todo antes de empezar. Podés dejar el celular " +
+                            "quieto: en cuanto el equipo aparezca de nuevo en tu red Wi-Fi, la " +
+                            "app para sola y guarda el código que funcionó (puede tardar varios " +
+                            "minutos, cada código espera hasta 30 segundos).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 } else {
                     Text(
                         "Probando código ${scanIndex + 1} de ${CommonPowerCodes.GENERIC_TV_BOX.size}... " +
-                            "Mirá si el equipo prendió."
+                            "esperando a que el equipo responda en la red (hasta 30 seg por código)."
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
