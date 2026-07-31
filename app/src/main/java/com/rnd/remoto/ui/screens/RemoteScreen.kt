@@ -280,6 +280,7 @@ private fun NetworkRemoteBody(
             device = device,
             repository = repository,
             irController = irController,
+            onResult = onResult,
             onDismiss = { showIrPowerDialog = false }
         )
     }
@@ -302,6 +303,7 @@ private fun IrPowerCodeDialog(
     device: RemoteDevice,
     repository: DeviceRepository,
     irController: IrController,
+    onResult: (Result<Unit>) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -319,6 +321,18 @@ private fun IrPowerCodeDialog(
     }
 
     fun startScan() {
+        if (!irController.hasIrEmitter()) {
+            onResult(
+                Result.failure(
+                    IllegalStateException(
+                        "Este celular no tiene (o no expone) un emisor infrarrojo físico. " +
+                            "La búsqueda automática no puede funcionar en este equipo."
+                    )
+                )
+            )
+            return
+        }
+
         isScanning = true
         autoDetected = false
         scanIndex = 0
@@ -328,7 +342,14 @@ private fun IrPowerCodeDialog(
 
         scanJob = scope.launch {
             while (isActive && scanIndex < CommonPowerCodes.GENERIC_TV_BOX.size) {
-                irController.sendHexPair(CommonPowerCodes.GENERIC_TV_BOX[scanIndex])
+                val sendResult = irController.sendHexPair(CommonPowerCodes.GENERIC_TV_BOX[scanIndex])
+                if (sendResult.isFailure) {
+                    // Si el envío en sí falla (no solo "el código no era"), seguir probando los
+                    // 16 restantes no tiene sentido - algo más profundo no está funcionando.
+                    onResult(sendResult)
+                    isScanning = false
+                    return@launch
+                }
 
                 if (scanner != null && ip != null && port != null) {
                     // Le damos tiempo a la caja para terminar de arrancar y que su red
