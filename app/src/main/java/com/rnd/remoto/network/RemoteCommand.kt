@@ -55,6 +55,9 @@ interface RemoteController {
     /** Avisa al dispositivo que la búsqueda por voz ya terminó (para que cierre su pantalla de escucha). */
     suspend fun endVoice(sessionId: Int): Result<Unit> = Result.success(Unit)
 
+    /** Abre una app por su nombre de paquete. Por defecto intenta como enlace; Android TV lo resuelve de otra forma. */
+    suspend fun openApp(packageName: String): Result<Unit> = launchApp(packageName)
+
     /** Lleva el campo de texto enfocado del dispositivo de [previous] a [current] mandando solo
      * la diferencia (borra lo que sobra y teclea lo nuevo): sirve para espejar un teclado en vivo. */
     suspend fun editText(previous: String, current: String): Result<Unit> =

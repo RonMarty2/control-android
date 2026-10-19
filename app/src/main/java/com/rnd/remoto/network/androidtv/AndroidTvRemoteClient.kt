@@ -14,6 +14,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -33,6 +35,7 @@ private const val STALE_AFTER_MS = 20_000L
 private const val KEY_INTERVAL_MS = 25L
 private const val KEYCODE_ENTER = 66
 private const val KEYCODE_DEL = 67
+private const val KEYCODE_DPAD_CENTER = 23
 
 /**
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
@@ -182,6 +185,7 @@ class AndroidTvRemoteClient(
             fields.has(RemoteMessages.FIELD_REMOTE_IME_KEY_INJECT) -> {
                 val sub = fields.submessage(RemoteMessages.FIELD_REMOTE_IME_KEY_INJECT)
                 Log.d(TAG, "IME key_inject: ${describe(fields)}")
+                sub?.submessage(1)?.bytes(12)?.let { foregroundApp.value = it.utf8() }
                 onTextFieldMessage(sub)
             }
             fields.has(RemoteMessages.FIELD_REMOTE_IME_SHOW_REQUEST) -> {
@@ -232,6 +236,31 @@ class AndroidTvRemoteClient(
         if (textStatus != null || forceShow) _imeEvents.tryEmit(ImeEvent.TextFieldFocused(text, label))
     }
 
+
+    /** Paquete de la app que el TV tiene en primer plano (lo avisa solo cada vez que cambia). */
+    private val foregroundApp = MutableStateFlow<String?>(null)
+
+    /**
+     * Android TV no entiende un nombre de paquete como enlace, y "market://launch" lo rechaza.
+     * Lo que sí funciona: abrir la ficha de la app en Play Store (market://details) y apretar OK,
+     * que cae en el botón "Abrir" cuando la app está instalada.
+     */
+    override suspend fun openApp(packageName: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (foregroundApp.value == packageName) return@runCatching
+            sendWithReconnect(RemoteMessages.appLinkLaunchRequest("market://details?id=$packageName"))
+            // Esperar a que aparezca la tienda (o que la app ya se haya abierto sola).
+            val storeOrApp = withTimeoutOrNull(6000) {
+                foregroundApp.first { it == "com.android.vending" || it == packageName }
+            }
+            if (storeOrApp == packageName) return@runCatching
+            if (storeOrApp == null) error("El TV no abrió la ficha de la app. ¿Está instalada?")
+            delay(1500) // dejar que cargue la ficha y se enfoque el botón
+            sendWithReconnect(RemoteMessages.keyInject(KEYCODE_DPAD_CENTER))
+            withTimeoutOrNull(7000) { foregroundApp.first { it == packageName } }
+                ?: error("No se pudo abrir la app. Revisá que esté instalada en el TV.")
+        }
+    }
     override suspend fun connect(): Boolean = withContext(Dispatchers.IO) { ensureConnected() }
 
     override suspend fun setText(text: String): Result<Unit> = withContext(Dispatchers.IO) {

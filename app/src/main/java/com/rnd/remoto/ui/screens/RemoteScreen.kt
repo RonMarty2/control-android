@@ -314,7 +314,7 @@ private fun NetworkRemoteBody(
         }
 
         if (showAppShortcuts) {
-            RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
+            JellyfinButton(onClick = { scope.launch { onResult(controller?.openApp(JELLYFIN_PACKAGE) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) } })
         }
 
         if (onRepair != null) {
