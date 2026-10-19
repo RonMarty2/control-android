@@ -42,6 +42,9 @@ private const val STEP_MS = 1800L
 /** Si el equipo aparece en la red, el código correcto se mandó hace hasta ~1 min (tiempo de arranque). */
 private const val BOOT_WINDOW_CODES = 25
 
+/** Apagarse tarda pocos segundos, así que el código correcto está entre los últimos enviados. */
+private const val SHUTDOWN_WINDOW_CODES = 6
+
 private enum class Phase { SETUP, SWEEPING, STEPPING, FINISHED }
 
 /**
@@ -106,8 +109,10 @@ fun IrSearchDialog(
         val scanner = if (target != null) NetworkScanner(context) else null
 
         job = scope.launch {
-            // Solo tiene sentido vigilar la red si el equipo está apagado (no responde) ahora.
-            val watchNetwork = target != null && scanner != null && !scanner.isReachable(target.first, target.second)
+            // Vigilamos la red: si el equipo está prendido esperamos que desaparezca (se apagó);
+            // si está apagado, que aparezca (prendió). El código es el mismo botón de encendido.
+            val wasOn = target != null && scanner != null && scanner.isReachable(target.first, target.second)
+            val watchNetwork = target != null && scanner != null
             var i = start
             while (isActive && i < candidates.size) {
                 index = i
@@ -118,11 +123,11 @@ fun IrSearchDialog(
                     return@launch
                 }
                 delay(STEP_MS)
-                if (watchNetwork && scanner!!.isReachable(target!!.first, target.second)) {
-                    windowStart = maxOf(start, i - BOOT_WINDOW_CODES)
+                if (watchNetwork && scanner!!.isReachable(target!!.first, target.second) != wasOn) {
+                    windowStart = maxOf(start, i - if (wasOn) SHUTDOWN_WINDOW_CODES else BOOT_WINDOW_CODES)
                     windowEnd = i
                     index = windowStart
-                    note = "El equipo apareció en tu red Wi-Fi: el código que lo prendió es uno de los " +
+                    note = "El equipo " + (if (wasOn) "dejó de responder en tu red (se apagó)" else "apareció en tu red Wi-Fi") + ": el código correcto es uno de los " +
                         "${windowStart + 1} a ${windowEnd + 1}. Probalos de a uno: el correcto cambia " +
                         "el estado del equipo (lo apaga o lo prende)."
                     phase = Phase.STEPPING
@@ -165,11 +170,11 @@ fun IrSearchDialog(
                             )
                         } else {
                             Text(
-                                "Apagá el equipo del todo y apuntale la parte de arriba del celular " +
-                                    "(donde está el emisor IR), a menos de 3 metros. La app va probando " +
+                                "Apuntale la parte de arriba del celular (donde está el emisor IR) al equipo, " +
+                                    "a menos de 3 metros. Sirve prendido (busca el código que lo apaga) o apagado del todo (el que lo prende). La app va probando " +
                                     "códigos de una base pública de controles remotos, uno cada " +
-                                    "${STEP_MS / 1000.0} s. Tocá \"¡Prendió!\" apenas reaccione" +
-                                    if (device.ip != null) ", o dejala sola: si el equipo aparece en tu Wi-Fi, para sola." else ".",
+                                    "${STEP_MS / 1000.0} s. Tocá el botón apenas reaccione (se prenda o se apague)" +
+                                    if (device.ip != null) ", o dejala sola: si el equipo se apaga o aparece en tu Wi-Fi, para sola." else ".",
                                 style = MaterialTheme.typography.bodySmall
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
