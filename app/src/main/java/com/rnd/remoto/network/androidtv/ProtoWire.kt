@@ -110,6 +110,7 @@ fun List<ProtoField>.has(fieldNumber: Int): Boolean = any { it.number == fieldNu
 
 /** Wire framing used by both polo (pairing) and remotemessage (control) streams: varint length + payload. */
 object ProtoFraming {
+    private const val MAX_FRAME_BYTES = 1 shl 20
     fun writeFramed(stream: OutputStream, message: ByteArray) {
         writeRawVarint(stream, message.size)
         stream.write(message)
@@ -118,6 +119,7 @@ object ProtoFraming {
 
     fun readFramed(stream: InputStream): ByteArray {
         val len = readRawVarint(stream)
+        if (len < 0 || len > MAX_FRAME_BYTES) throw java.io.IOException("Mensaje inválido del dispositivo (tamaño $len)")
         val buffer = ByteArray(len)
         var read = 0
         while (read < len) {

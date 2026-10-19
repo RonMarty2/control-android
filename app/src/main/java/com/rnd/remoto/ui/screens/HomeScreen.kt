@@ -28,7 +28,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -56,6 +61,7 @@ fun HomeScreen(
 ) {
     val devices by repository.devices.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    var pendingDelete by remember { mutableStateOf<RemoteDevice?>(null) }
 
     Scaffold(
         topBar = {
@@ -106,12 +112,27 @@ fun HomeScreen(
                         DeviceRow(
                             device = device,
                             onOpen = { onOpenDevice(device.id) },
-                            onDelete = { scope.launch { repository.deleteDevice(device.id) } }
+                            onDelete = { pendingDelete = device }
                         )
                     }
                 }
             }
         }
+    }
+
+    pendingDelete?.let { device ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("¿Eliminar \"${device.name}\"?") },
+            text = { Text("Se pierde el emparejamiento y los códigos guardados de este dispositivo.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.deleteDevice(device.id) }
+                    pendingDelete = null
+                }) { Text("Eliminar") }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") } }
+        )
     }
 }
 

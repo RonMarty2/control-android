@@ -72,6 +72,14 @@ class VizioClient(
         RemoteCommand.MUTE -> 5 to 4
         RemoteCommand.CHANNEL_UP -> 8 to 1
         RemoteCommand.CHANNEL_DOWN -> 8 to 0
+        RemoteCommand.UP -> 3 to 8
+        RemoteCommand.DOWN -> 3 to 0
+        RemoteCommand.LEFT -> 3 to 1
+        RemoteCommand.RIGHT -> 3 to 7
+        RemoteCommand.SELECT -> 3 to 2
+        RemoteCommand.BACK -> 4 to 0
+        RemoteCommand.HOME -> 4 to 15
+        RemoteCommand.PLAY_PAUSE -> 2 to 3
         else -> null
     }
 }
