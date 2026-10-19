@@ -32,6 +32,18 @@ class DeviceRepository(private val context: Context) {
         }
     }
 
+    /** Read-modify-write sobre el estado guardado actual, para que callbacks de larga vida
+     * (token nuevo, IP nueva) no pisen cambios hechos después con una copia vieja del dispositivo. */
+    suspend fun updateDevice(id: String, transform: (RemoteDevice) -> RemoteDevice) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[key]?.let {
+                runCatching { json.decodeFromString(serializer, it) }.getOrDefault(emptyList())
+            } ?: emptyList()
+            val updated = current.map { if (it.id == id) transform(it) else it }
+            prefs[key] = json.encodeToString(serializer, updated)
+        }
+    }
+
     suspend fun deleteDevice(id: String) {
         context.dataStore.edit { prefs ->
             val current = prefs[key]?.let {

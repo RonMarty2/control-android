@@ -10,13 +10,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Socket
 import javax.net.ssl.SSLSocket
 
 private const val TAG = "AndroidTvRemote"
+private const val CONNECT_TIMEOUT_MS = 3000
+private const val READY_TIMEOUT_MS = 8000L
+private const val STALE_AFTER_MS = 20_000L
 
 /**
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
@@ -27,6 +35,9 @@ private const val TAG = "AndroidTvRemote"
  * [context] was provided, this rescans the local network for any host that still accepts our
  * client cert on [port] and switches to it automatically — no re-pairing needed, since the TV
  * already trusts this app's certificate regardless of which IP it's reached at.
+ *
+ * The connection is re-validated on every command: if the socket died silently (Wi-Fi switch,
+ * TV powered off, long inactivity) it is dropped and re-opened instead of writing into it.
  */
 class AndroidTvRemoteClient(
     private var ip: String,
@@ -37,19 +48,33 @@ class AndroidTvRemoteClient(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeMutex = Mutex()
-    private var socket: SSLSocket? = null
-    private var readLoopJob: Job? = null
-    private var ready: CompletableDeferred<Boolean>? = null
+    private val connectMutex = Mutex()
 
-    private fun openHandshakedSocket(targetIp: String): SSLSocket? = try {
-        val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory.createSocket(targetIp, port) as SSLSocket
-        sslSocket.enabledProtocols = sslSocket.supportedProtocols
-        sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
-        sslSocket.startHandshake()
-        sslSocket
-    } catch (e: Exception) {
-        Log.d(TAG, "No responde en $targetIp: ${e.message}")
-        null
+    @Volatile private var socket: SSLSocket? = null
+    @Volatile private var connected = false
+    @Volatile private var lastInboundAt = 0L
+    private var readLoopJob: Job? = null
+
+    private fun openHandshakedSocket(targetIp: String): SSLSocket? {
+        var plain: Socket? = null
+        return try {
+            // Timeout explícito: sin él, una IP de otra red (p. ej. tras cambiar de Wi-Fi) deja
+            // el connect colgado ~2 minutos en vez de pasar rápido a re-buscar el equipo.
+            plain = Socket().apply { connect(InetSocketAddress(targetIp, port), CONNECT_TIMEOUT_MS) }
+            val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory
+                .createSocket(plain, targetIp, port, true) as SSLSocket
+            sslSocket.enabledProtocols = sslSocket.supportedProtocols
+            sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
+            sslSocket.soTimeout = CONNECT_TIMEOUT_MS
+            sslSocket.startHandshake()
+            sslSocket.soTimeout = 0
+            sslSocket.keepAlive = true
+            sslSocket
+        } catch (e: Exception) {
+            Log.d(TAG, "No responde en $targetIp: ${e.message}")
+            runCatching { plain?.close() }
+            null
+        }
     }
 
     private suspend fun rediscoverIp(): String? {
@@ -64,13 +89,26 @@ class AndroidTvRemoteClient(
         return null
     }
 
-    private suspend fun ensureConnected(): Boolean {
-        ready?.let { existing ->
-            if (existing.await()) return true
-        }
+    /** Conexión viva = socket abierto, handshake de control completo y el TV todavía nos habla
+     * (manda un ping cada pocos segundos; si pasó mucho sin nada, la conexión murió sin avisar,
+     * típico al cambiar de Wi-Fi o volver de inactividad). */
+    private fun isAlive(): Boolean {
+        val s = socket ?: return false
+        return connected && !s.isClosed &&
+            System.currentTimeMillis() - lastInboundAt < STALE_AFTER_MS
+    }
 
-        val readyDeferred = CompletableDeferred<Boolean>()
-        ready = readyDeferred
+    private fun teardown() {
+        connected = false
+        readLoopJob?.cancel()
+        readLoopJob = null
+        runCatching { socket?.close() }
+        socket = null
+    }
+
+    private suspend fun ensureConnected(): Boolean = connectMutex.withLock {
+        if (isAlive()) return@withLock true
+        teardown()
 
         var sslSocket = openHandshakedSocket(ip)
         if (sslSocket == null) {
@@ -84,35 +122,49 @@ class AndroidTvRemoteClient(
 
         if (sslSocket == null) {
             Log.e(TAG, "No se pudo conectar al Android TV")
-            readyDeferred.complete(false)
-            return false
+            return@withLock false
         }
 
+        val readyDeferred = CompletableDeferred<Boolean>()
         socket = sslSocket
-        readLoopJob = scope.launch { readLoop(readyDeferred) }
-        return readyDeferred.await()
+        lastInboundAt = System.currentTimeMillis()
+        readLoopJob = scope.launch { readLoop(sslSocket, readyDeferred) }
+
+        val ok = withTimeoutOrNull(READY_TIMEOUT_MS) { readyDeferred.await() } == true
+        if (ok) connected = true else teardown()
+        ok
     }
 
-    private suspend fun readLoop(readyDeferred: CompletableDeferred<Boolean>) {
-        val sslSocket = socket ?: return
+    private suspend fun readLoop(sslSocket: SSLSocket, readyDeferred: CompletableDeferred<Boolean>) {
         try {
             while (true) {
                 val raw = ProtoFraming.readFramed(sslSocket.inputStream)
-                handleMessage(ProtoReader(raw).readFields(), readyDeferred)
+                lastInboundAt = System.currentTimeMillis()
+                handleMessage(sslSocket, ProtoReader(raw).readFields(), readyDeferred)
             }
         } catch (e: Exception) {
             Log.d(TAG, "Conexión con el Android TV cerrada: ${e.message}")
+        } finally {
             if (!readyDeferred.isCompleted) readyDeferred.complete(false)
+            // Solo invalidamos si este sigue siendo el socket vigente (no uno ya reemplazado).
+            if (socket === sslSocket) {
+                connected = false
+                runCatching { sslSocket.close() }
+            }
         }
     }
 
-    private suspend fun handleMessage(fields: List<ProtoField>, readyDeferred: CompletableDeferred<Boolean>) {
+    private suspend fun handleMessage(
+        sslSocket: SSLSocket,
+        fields: List<ProtoField>,
+        readyDeferred: CompletableDeferred<Boolean>
+    ) {
         when {
-            fields.has(RemoteMessages.FIELD_REMOTE_CONFIGURE) -> writeMessage(RemoteMessages.configureReply())
-            fields.has(RemoteMessages.FIELD_REMOTE_SET_ACTIVE) -> writeMessage(RemoteMessages.setActiveReply())
+            fields.has(RemoteMessages.FIELD_REMOTE_CONFIGURE) -> writeMessage(sslSocket, RemoteMessages.configureReply())
+            fields.has(RemoteMessages.FIELD_REMOTE_SET_ACTIVE) -> writeMessage(sslSocket, RemoteMessages.setActiveReply())
             fields.has(RemoteMessages.FIELD_REMOTE_PING_REQUEST) -> {
                 val val1 = fields.submessage(RemoteMessages.FIELD_REMOTE_PING_REQUEST)?.varint(1) ?: 0L
-                writeMessage(RemoteMessages.pingResponse(val1))
+                writeMessage(sslSocket, RemoteMessages.pingResponse(val1))
             }
             fields.has(RemoteMessages.FIELD_REMOTE_START) -> {
                 if (!readyDeferred.isCompleted) readyDeferred.complete(true)
@@ -120,37 +172,45 @@ class AndroidTvRemoteClient(
         }
     }
 
-    private suspend fun writeMessage(message: ByteArray) {
-        val sslSocket = socket ?: return
+    private suspend fun writeMessage(sslSocket: SSLSocket, message: ByteArray) {
         writeMutex.withLock {
             ProtoFraming.writeFramed(sslSocket.outputStream, message)
         }
     }
 
+    /** Conecta si hace falta y manda [message]; si el socket resulta estar muerto, reconecta
+     * y reintenta una vez (evita tener que cerrar la app tras cambiar de red o inactividad). */
+    private suspend fun sendWithReconnect(message: ByteArray) {
+        val notConnected = "No se pudo conectar al Android TV. Revisá que esté encendido y en la misma red. " +
+            "Si sigue sin responder, volvé a emparejarlo."
+        repeat(2) {
+            if (!ensureConnected()) error(notConnected)
+            val current = socket ?: return@repeat
+            try {
+                writeMessage(current, message)
+                return
+            } catch (e: IOException) {
+                Log.d(TAG, "Falló el envío, reconectando: ${e.message}")
+                teardown()
+            }
+        }
+        error(notConnected)
+    }
+
     override suspend fun send(command: RemoteCommand): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            if (!ensureConnected()) {
-                error("No se pudo conectar al Android TV. Revisá que esté encendido, en la misma red, y ya emparejado.")
-            }
             val keyCode = mapKeyCode(command) ?: error("Comando no soportado")
-            writeMessage(RemoteMessages.keyInject(keyCode))
+            sendWithReconnect(RemoteMessages.keyInject(keyCode))
         }
     }
 
     override suspend fun launchApp(appLink: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!ensureConnected()) {
-                error("No se pudo conectar al Android TV. Revisá que esté encendido, en la misma red, y ya emparejado.")
-            }
-            writeMessage(RemoteMessages.appLinkLaunchRequest(appLink))
-        }
+        runCatching { sendWithReconnect(RemoteMessages.appLinkLaunchRequest(appLink)) }
     }
 
     override fun close() {
-        readLoopJob?.cancel()
-        runCatching { socket?.close() }
-        socket = null
-        ready = null
+        teardown()
+        scope.cancel()
     }
 
     private fun mapKeyCode(command: RemoteCommand): Int? = when (command) {

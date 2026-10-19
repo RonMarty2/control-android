@@ -57,6 +57,7 @@ class SamsungClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                ready = false
                 if (!connected.isCompleted) connected.complete(false)
             }
 
@@ -86,12 +87,17 @@ class SamsungClient(
                 })
             }
             val sent = socket?.send(payload.toString()) ?: error("Socket no disponible")
-            if (!sent) error("No se pudo enviar el comando al TV Samsung")
+            if (!sent) {
+                ready = false
+                error("No se pudo enviar el comando al TV Samsung")
+            }
         }
     }
 
     override fun close() {
+        ready = false
         socket?.close(1000, null)
+        socket = null
     }
 
     private fun mapKey(command: RemoteCommand): String? = when (command) {

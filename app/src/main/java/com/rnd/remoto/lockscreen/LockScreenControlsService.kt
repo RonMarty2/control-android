@@ -16,12 +16,15 @@ import com.rnd.remoto.R
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.ir.IrController
+import com.rnd.remoto.data.RemoteDevice
 import com.rnd.remoto.network.RemoteCommand
+import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
 import com.rnd.remoto.premium.PremiumRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -83,11 +86,34 @@ class LockScreenControlsService : Service() {
                 return@launch
             }
 
-            val controller = controllerFactory.create(device) ?: return@launch
+            // Un solo controlador por dispositivo: crear uno nuevo en cada toque abría una
+            // conexión TLS nueva (lento) y dejaba la anterior sin cerrar.
+            if (cachedDeviceId != device.id || cachedDeviceKey(device) != cachedKey) {
+                cachedController?.close()
+                cachedController = controllerFactory.create(device)
+                cachedDeviceId = device.id
+                cachedKey = cachedDeviceKey(device)
+            }
+            val controller = cachedController ?: return@launch
             controller.send(command).onFailure {
                 Log.e(TAG, "Comando desde pantalla de bloqueo falló", it)
             }
         }
+    }
+
+    private var cachedController: RemoteController? = null
+    private var cachedDeviceId: String? = null
+    private var cachedKey: String? = null
+
+    /** Cambia cuando el dispositivo se edita/reemparejó, para no reusar un cliente desactualizado. */
+    private fun cachedDeviceKey(device: RemoteDevice): String =
+        "${device.type}|${device.androidTvPaired}|${device.vizioAuthToken}"
+
+    override fun onDestroy() {
+        cachedController?.close()
+        cachedController = null
+        scope.cancel()
+        super.onDestroy()
     }
 
     private fun pendingIntentFor(actionName: String): PendingIntent {

@@ -154,7 +154,12 @@ fun RemoteScreen(
                         irController = irController,
                         repository = repository,
                         onResult = ::report,
-                        showAppShortcuts = true
+                        showAppShortcuts = true,
+                        // Si el TV ya no reconoce este celular (p. ej. se vinculó otro equipo o se
+                        // reseteó la lista de emparejados), hay que volver a emparejar.
+                        onRepair = {
+                            scope.launch { repository.updateDevice(device.id) { it.copy(androidTvPaired = false) } }
+                        }
                     )
                 }
                 DeviceType.VIZIO -> if (device.vizioAuthToken == null) {
@@ -201,7 +206,8 @@ private fun NetworkRemoteBody(
     irController: IrController,
     repository: DeviceRepository,
     onResult: (Result<Unit>) -> Unit,
-    showAppShortcuts: Boolean = false
+    showAppShortcuts: Boolean = false,
+    onRepair: (() -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     var showIrPowerDialog by remember { mutableStateOf(false) }
@@ -272,6 +278,10 @@ private fun NetworkRemoteBody(
 
         if (showAppShortcuts) {
             RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
+        }
+
+        if (onRepair != null) {
+            TextButton(onClick = onRepair) { Text("¿No responde? Volver a emparejar") }
         }
     }
 
@@ -441,7 +451,7 @@ private fun IrPowerCodeDialog(
             Button(
                 enabled = text.isNotBlank(),
                 onClick = {
-                    scope.launch { repository.saveDevice(device.copy(irCodes = device.irCodes + ("POWER" to text.trim()))) }
+                    scope.launch { repository.updateDevice(device.id) { it.copy(irCodes = it.irCodes + ("POWER" to text.trim())) } }
                     stopScan()
                     onDismiss()
                 }
@@ -634,8 +644,7 @@ private fun IrRemoteBody(
             },
             confirmButton = {
                 Button(onClick = {
-                    val updated = device.irCodes + (currentEditingKey to text.trim())
-                    scope.launch { repository.saveDevice(device.copy(irCodes = updated)) }
+                    scope.launch { repository.updateDevice(device.id) { it.copy(irCodes = it.irCodes + (currentEditingKey to text.trim())) } }
                     editingKey = null
                 }) { Text("Guardar") }
             },
@@ -702,7 +711,7 @@ private fun AndroidTvPairingBody(
                     isBusy = true
                     val result = client.submitPin(pin.trim())
                     if (result.isSuccess) {
-                        repository.saveDevice(device.copy(androidTvPaired = true))
+                        repository.updateDevice(device.id) { it.copy(androidTvPaired = true) }
                         awaitingPin = false
                     } else {
                         onError(result.exceptionOrNull()?.message ?: "El PIN no coincide")

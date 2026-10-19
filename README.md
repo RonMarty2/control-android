@@ -7,6 +7,8 @@ App de control remoto universal para Android. Contempla dos mundos:
    - **Roku** (TVs Roku y TVs con Roku TV integrado)
    - **LG Smart TV (webOS)**
    - **Samsung Smart TV (Tizen)**
+   - **Android TV / TV Box** (emparejado con PIN de 6 caracteres que aparece en el TV; cada celular/tablet se empareja por separado)
+   - **Vizio**, **Sony Bravia**, **Philips** y **Panasonic**
    - **Wake-on-LAN**: para encender por red cualquier equipo que lo soporte (PCs, algunos TV box, NAS, etc)
 
 No sabés nada de Android ni de programación, así que esta guía asume eso: vamos paso a paso, desde instalar el programa hasta probar la app en tu celular.
@@ -142,3 +144,12 @@ app/src/main/java/com/rnd/remoto/
 ├── network/                     clientes Roku, LG, Samsung, Wake-on-LAN, escaneo de red
 └── ui/                          pantallas (Compose): lista, agregar, control remoto
 ```
+
+---
+
+## 9. Funciones extra y solución de problemas
+
+- **Encendido por IR de respaldo**: en equipos que no responden por Wi-Fi cuando están apagados, se puede cargar (o buscar automáticamente) un código IR de encendido; el botón de power lo usa si falla el Wi-Fi.
+- **Controles en pantalla de bloqueo** (premium) y **fondos de pantalla** (foto/video).
+- **Reconexión automática (Android TV)**: al cambiar de Wi-Fi, volver de inactividad o apagar/encender el TV, la app detecta la conexión caída, se reconecta (re-buscando el TV en la red si cambió su IP) y reintenta el comando, sin tener que cerrar la app. Esto cubre el error "Broken pipe".
+- **Si un celular dejó de controlar el TV Box** (p. ej. porque se vinculó otro equipo): en el control tocá **"¿No responde? Volver a emparejar"** y repetí el emparejamiento con el PIN.

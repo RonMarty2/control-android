@@ -24,14 +24,14 @@ class RemoteControllerFactory(
                 ip = device.ip ?: return null,
                 clientKey = device.lgClientKey
             ) { newKey ->
-                scope.launch { repository.saveDevice(device.copy(lgClientKey = newKey)) }
+                scope.launch { repository.updateDevice(device.id) { it.copy(lgClientKey = newKey) } }
             }
 
             DeviceType.SAMSUNG -> SamsungClient(
                 ip = device.ip ?: return null,
                 token = device.samsungToken
             ) { newToken ->
-                scope.launch { repository.saveDevice(device.copy(samsungToken = newToken)) }
+                scope.launch { repository.updateDevice(device.id) { it.copy(samsungToken = newToken) } }
             }
 
             DeviceType.ANDROID_TV -> {
@@ -40,7 +40,7 @@ class RemoteControllerFactory(
                     ip = device.ip ?: return null,
                     context = context.applicationContext
                 ) { newIp ->
-                    scope.launch { repository.saveDevice(device.copy(ip = newIp)) }
+                    scope.launch { repository.updateDevice(device.id) { it.copy(ip = newIp) } }
                 }
             }
 

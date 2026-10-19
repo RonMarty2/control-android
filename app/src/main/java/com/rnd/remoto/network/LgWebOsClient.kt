@@ -68,6 +68,7 @@ class LgWebOsClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                connected = false
                 if (!registered.isCompleted) registered.complete(false)
                 if (!pointerUrl.isCompleted) pointerUrl.complete(null)
             }
@@ -90,7 +91,12 @@ class LgWebOsClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                connected = false
                 if (!pointerReady.isCompleted) pointerReady.complete(false)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                connected = false
             }
         }
         pointerSocket = http.newWebSocket(Request.Builder().url(path).build(), pointerListener)
@@ -105,13 +111,19 @@ class LgWebOsClient(
             }
             val name = mapButton(command) ?: error("Comando no soportado")
             val sent = pointerSocket?.send("type:button\nname:$name\n\n") ?: error("Socket no disponible")
-            if (!sent) error("No se pudo enviar el comando al TV LG")
+            if (!sent) {
+                connected = false
+                error("No se pudo enviar el comando al TV LG")
+            }
         }
     }
 
     override fun close() {
+        connected = false
         pointerSocket?.close(1000, null)
         mainSocket?.close(1000, null)
+        pointerSocket = null
+        mainSocket = null
     }
 
     private fun registerPayload(): String {
