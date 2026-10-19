@@ -75,7 +75,6 @@ import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
-import com.rnd.remoto.ir.CommonPowerCodes
 import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.RemoteCommand
@@ -222,6 +221,7 @@ private fun NetworkRemoteBody(
     val scope = rememberCoroutineScope()
     var showIrPowerDialog by remember { mutableStateOf(false) }
     var showTextDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
@@ -231,6 +231,18 @@ private fun NetworkRemoteBody(
     }
     fun pressPower() {
         scope.launch {
+            // Con código IR cargado, si el equipo no responde en la red (apagado del todo) mandamos
+            // el IR de una vez, sin esperar a que la conexión Wi-Fi agote sus reintentos.
+            val storedIr = device.irCodes["POWER"]
+            if (!storedIr.isNullOrBlank() && irController.hasIrEmitter()) {
+                val ip = device.ip
+                val port = controlPortFor(device)
+                val reachable = ip != null && port != null && NetworkScanner(context).isReachable(ip, port, 800)
+                if (!reachable) {
+                    onResult(irController.sendCode(storedIr))
+                    return@launch
+                }
+            }
             val wifiResult = controller?.send(RemoteCommand.POWER)
                 ?: Result.failure(IllegalStateException("Dispositivo no configurado"))
             val irPowerCode = device.irCodes["POWER"]
@@ -238,7 +250,7 @@ private fun NetworkRemoteBody(
             // (el chip de red también se apaga); si falló y hay un código IR de encendido
             // cargado, lo mandamos como respaldo - una vez prendido, todo lo demás sigue por Wi-Fi.
             if (wifiResult.isFailure && !irPowerCode.isNullOrBlank()) {
-                onResult(irController.sendHexPair(irPowerCode))
+                onResult(irController.sendCode(irPowerCode))
             } else {
                 onResult(wifiResult)
             }
@@ -257,7 +269,7 @@ private fun NetworkRemoteBody(
             onClick = { pressPower() }
         )
 
-        TextButton(onClick = { showIrPowerDialog = true }) {
+        if (irController.hasIrEmitter() || !device.irCodes["POWER"].isNullOrBlank()) TextButton(onClick = { showIrPowerDialog = true }) {
             Text(
                 if (device.irCodes["POWER"].isNullOrBlank()) "¿No prende por Wi-Fi? Configurar encendido por IR"
                 else "Encendido por IR configurado (editar)"
@@ -302,7 +314,7 @@ private fun NetworkRemoteBody(
     }
 
     if (showIrPowerDialog) {
-        IrPowerCodeDialog(
+        IrSearchDialog(
             device = device,
             repository = repository,
             irController = irController,
@@ -312,7 +324,7 @@ private fun NetworkRemoteBody(
     }
 }
 
-private fun controlPortFor(device: RemoteDevice): Int? = when (device.type) {
+internal fun controlPortFor(device: RemoteDevice): Int? = when (device.type) {
     DeviceType.ANDROID_TV -> 6466
     DeviceType.ROKU -> device.port ?: 8060
     DeviceType.SAMSUNG -> device.port ?: 8002
@@ -325,162 +337,7 @@ private fun controlPortFor(device: RemoteDevice): Int? = when (device.type) {
 }
 
 @Composable
-private fun IrPowerCodeDialog(
-    device: RemoteDevice,
-    repository: DeviceRepository,
-    irController: IrController,
-    onResult: (Result<Unit>) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var text by remember { mutableStateOf(device.irCodes["POWER"] ?: "") }
-    var isScanning by remember { mutableStateOf(false) }
-    var scanIndex by remember { mutableStateOf(0) }
-    var autoDetected by remember { mutableStateOf(false) }
-    var scanJob by remember { mutableStateOf<Job?>(null) }
-
-    fun stopScan() {
-        scanJob?.cancel()
-        scanJob = null
-        isScanning = false
-    }
-
-    fun startScan() {
-        if (!irController.hasIrEmitter()) {
-            onResult(
-                Result.failure(
-                    IllegalStateException(
-                        "Este celular no tiene (o no expone) un emisor infrarrojo físico. " +
-                            "La búsqueda automática no puede funcionar en este equipo."
-                    )
-                )
-            )
-            return
-        }
-
-        isScanning = true
-        autoDetected = false
-        scanIndex = 0
-        val ip = device.ip
-        val port = controlPortFor(device)
-        val scanner = if (ip != null && port != null) NetworkScanner(context) else null
-
-        scanJob = scope.launch {
-            while (isActive && scanIndex < CommonPowerCodes.GENERIC_TV_BOX.size) {
-                val sendResult = irController.sendHexPair(CommonPowerCodes.GENERIC_TV_BOX[scanIndex])
-                if (sendResult.isFailure) {
-                    // Si el envío en sí falla (no solo "el código no era"), seguir probando los
-                    // 16 restantes no tiene sentido - algo más profundo no está funcionando.
-                    onResult(sendResult)
-                    isScanning = false
-                    return@launch
-                }
-
-                if (scanner != null && ip != null && port != null) {
-                    // Le damos tiempo a la caja para terminar de arrancar y que su red
-                    // responda; si aparece en la red, ese código funcionó - paramos solos.
-                    var foundOnNetwork = false
-                    for (attempt in 1..10) {
-                        if (!isActive) break
-                        delay(3000)
-                        if (scanner.isReachable(ip, port)) {
-                            foundOnNetwork = true
-                            break
-                        }
-                    }
-                    if (foundOnNetwork) {
-                        text = CommonPowerCodes.GENERIC_TV_BOX[scanIndex]
-                        autoDetected = true
-                        isScanning = false
-                        return@launch
-                    }
-                } else {
-                    delay(1500)
-                }
-                scanIndex++
-            }
-            isScanning = false
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = { stopScan(); onDismiss() },
-        title = { Text("Código IR para encender") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "Si este equipo solo prende por infrarrojo cuando está totalmente apagado " +
-                        "(no responde por Wi-Fi en ese estado), cargá acá el código NEC de " +
-                        "encendido de su control físico original (direccion,comando en " +
-                        "hexadecimal, ej: 07,02), o dejá que la app pruebe códigos comunes de " +
-                        "cajas TV genéricas."
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("Código (ej: 07,02)") },
-                    enabled = !isScanning,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (autoDetected) {
-                    Text(
-                        "¡Listo! Detectamos que el equipo respondió en la red después de este " +
-                            "código, así que probablemente sea el correcto.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else if (!isScanning) {
-                    OutlinedButton(onClick = { startScan() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Probar códigos automáticamente")
-                    }
-                    Text(
-                        "Apagá el equipo del todo antes de empezar. Podés dejar el celular " +
-                            "quieto: en cuanto el equipo aparezca de nuevo en tu red Wi-Fi, la " +
-                            "app para sola y guarda el código que funcionó (puede tardar varios " +
-                            "minutos, cada código espera hasta 30 segundos).",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    Text(
-                        "Probando código ${scanIndex + 1} de ${CommonPowerCodes.GENERIC_TV_BOX.size}... " +
-                            "esperando a que el equipo responda en la red (hasta 30 seg por código)."
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                text = CommonPowerCodes.GENERIC_TV_BOX[scanIndex.coerceIn(0, CommonPowerCodes.GENERIC_TV_BOX.size - 1)]
-                                stopScan()
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("¡Prendió! Usar este")
-                        }
-                        OutlinedButton(onClick = { stopScan() }, modifier = Modifier.weight(1f)) {
-                            Text("Detener")
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = text.isNotBlank(),
-                onClick = {
-                    scope.launch { repository.updateDevice(device.id) { it.copy(irCodes = it.irCodes + ("POWER" to text.trim())) } }
-                    stopScan()
-                    onDismiss()
-                }
-            ) { Text("Guardar") }
-        },
-        dismissButton = {
-            TextButton(onClick = { stopScan(); onDismiss() }) { Text("Cancelar") }
-        }
-    )
-}
-
-@Composable
-private fun RemoteIconButton(
+internal fun RemoteIconButton(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
@@ -550,14 +407,14 @@ private fun Modifier.repeatingClickable(
 }
 
 @Composable
-private fun RemoteTextButton(text: String, onClick: () -> Unit) {
+internal fun RemoteTextButton(text: String, onClick: () -> Unit) {
     FilledTonalButton(onClick = onClick, modifier = Modifier.height(64.dp)) {
         Text(text, style = MaterialTheme.typography.titleMedium)
     }
 }
 
 @Composable
-private fun BigDPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
+internal fun BigDPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 72.dp, repeatable = true)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
@@ -583,91 +440,6 @@ private fun WolRemoteBody(controller: RemoteController?, onResult: (Result<Unit>
         Icon(Icons.Filled.PowerSettingsNew, contentDescription = null)
         Spacer(Modifier.height(0.dp))
         Text(" Encender")
-    }
-}
-
-private val IR_BUTTONS = listOf(
-    "POWER" to "Encender/Apagar",
-    "VOLUME_UP" to "Volumen +",
-    "VOLUME_DOWN" to "Volumen -",
-    "MUTE" to "Silencio",
-    "CHANNEL_UP" to "Canal +",
-    "CHANNEL_DOWN" to "Canal -"
-)
-
-@Composable
-private fun IrRemoteBody(
-    device: RemoteDevice,
-    irController: IrController,
-    repository: DeviceRepository,
-    onError: (String) -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    var editingKey by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        if (!irController.hasIrEmitter()) {
-            onError("Este celular no tiene emisor infrarrojo. Esta función no va a funcionar en este equipo.")
-        }
-    }
-
-    Text(
-        if (irController.hasIrEmitter()) "Emisor IR detectado en este celular"
-        else "⚠ Este celular no tiene emisor IR físico"
-    )
-
-    IR_BUTTONS.chunked(2).forEach { row ->
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            row.forEach { (key, label) ->
-                val code = device.irCodes[key]
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Button(onClick = {
-                        if (code.isNullOrBlank()) {
-                            editingKey = key
-                        } else {
-                            irController.sendHexPair(code).onFailure {
-                                onError(it.message ?: "No se pudo enviar la señal IR")
-                            }.onSuccess {
-                                onError("Señal IR enviada (código $code)")
-                            }
-                        }
-                    }) {
-                        Text(label)
-                    }
-                    Text(
-                        if (code.isNullOrBlank()) "sin código" else code,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall
-                    )
-                    androidx.compose.material3.TextButton(onClick = { editingKey = key }) {
-                        Text("Editar código")
-                    }
-                }
-            }
-        }
-    }
-
-    val currentEditingKey = editingKey
-    if (currentEditingKey != null) {
-        var text by remember(currentEditingKey) { mutableStateOf(device.irCodes[currentEditingKey] ?: "") }
-        AlertDialog(
-            onDismissRequest = { editingKey = null },
-            title = { Text("Código NEC para ${IR_BUTTONS.toMap()[currentEditingKey]}") },
-            text = {
-                Column {
-                    Text("Formato: direccion,comando en hexadecimal. Ej: 07,02")
-                    OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    scope.launch { repository.updateDevice(device.id) { it.copy(irCodes = it.irCodes + (currentEditingKey to text.trim())) } }
-                    editingKey = null
-                }) { Text("Guardar") }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { editingKey = null }) { Text("Cancelar") }
-            }
-        )
     }
 }
 

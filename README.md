@@ -154,3 +154,21 @@ app/src/main/java/com/rnd/remoto/
 - **Controles en pantalla de bloqueo** (premium) y **fondos de pantalla** (foto/video).
 - **Reconexión automática (Android TV)**: al cambiar de Wi-Fi, volver de inactividad o apagar/encender el TV, la app detecta la conexión caída, se reconecta (re-buscando el TV en la red si cambió su IP) y reintenta el comando, sin tener que cerrar la app. Esto cubre el error "Broken pipe".
 - **Si un celular dejó de controlar el TV Box** (p. ej. porque se vinculó otro equipo): en el control tocá **"¿No responde? Volver a emparejar"** y repetí el emparejamiento con el PIN.
+
+---
+
+## 10. Control universal por infrarrojo
+
+- **Deteccion sin parpadeo**: la app solo consulta al sistema si el celular tiene emisor IR (`ConsumerIrManager.hasIrEmitter()`); nunca emite nada para comprobarlo. Si no hay emisor, la opcion infrarrojo se desactiva y se explica por que.
+- **Buscar codigo**: en un dispositivo IR (o en el boton "Configurar encendido por IR" de un TV Box) la app prueba, uno cada ~1,8 s, los codigos de encendido de una base de ~500 senales de marcas de TV, TV box y decodificadores. Se puede filtrar por tipo (TV Box / Televisor / Todo) y por marca. Se detiene al tocar "Prendio" o, si el equipo tiene IP, cuando aparece en la red Wi-Fi; luego se prueban de a uno los ultimos codigos enviados hasta confirmar cual fue.
+- Al confirmar en un dispositivo IR se cargan tambien los demas botones del mismo control (flechas, OK, volumen, canal, etc.) cuando la base los tiene.
+- Protocolos soportados: NEC (y extendido), Samsung, Sony SIRC 12/15/20, RC5, RC6, JVC y senales crudas. Si el emisor solo cubre un rango de frecuencias, la app ajusta la portadora.
+- Para un TV Box que solo enciende por IR y ademas tiene Wi-Fi: el boton de encendido manda el IR directamente si el equipo no responde en la red, y despues todo sigue por Wi-Fi.
+
+### Base de datos (`app/src/main/assets/ir_power_codes*.txt`)
+
+Generada con un script a partir de bases publicas:
+- `ir_power_codes.txt`: [Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB) y [CoreELEC/remotes](https://github.com/CoreELEC/remotes), ambas CC0.
+- `ir_power_codes_irdb.txt`: [irdb](https://github.com/probonopd/irdb) de Simon Peter y colaboradores. **Su licencia exige**: (1) avisar al proyecto abriendo un issue en https://github.com/probonopd/irdb/issues, (2) incluir el aviso "Contains/accesses irdb by Simon Peter and contributors, used under permission. For licensing details and for information on how to contribute to the database, see https://github.com/probonopd/irdb" y (3) enviarles hasta tres copias del producto si las piden. Si no queres cumplir eso, borra ese archivo: la app funciona igual con el primero.
+
+Contains/accesses irdb by Simon Peter and contributors, used under permission. For licensing details and for information on how to contribute to the database, see https://github.com/probonopd/irdb

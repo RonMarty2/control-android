@@ -31,6 +31,9 @@ object NecEncoder {
     fun encodeExtended(addressLow: Int, addressHigh: Int, command: Int): IntArray =
         buildFrame(addressLow and 0xFF, addressHigh and 0xFF, command and 0xFF, command.inv() and 0xFF)
 
+    /** Raw 4-byte NEC frame, bytes in transmission order (each sent LSB first). */
+    fun encodeBytes(b0: Int, b1: Int, b2: Int, b3: Int): IntArray = buildFrame(b0 and 0xFF, b1 and 0xFF, b2 and 0xFF, b3 and 0xFF)
+
     private fun buildFrame(byte1: Int, byte2: Int, byte3: Int, byte4: Int): IntArray {
         val bits = ArrayList<Int>(32)
         fun addByte(byte: Int) {

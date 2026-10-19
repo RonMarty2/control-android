@@ -50,6 +50,7 @@ import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.data.RemoteDevice
 import com.rnd.remoto.data.category
+import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.ScanResult
 import kotlinx.coroutines.flow.first
@@ -97,6 +98,9 @@ fun AddDeviceScreen(
 
 @Composable
 private fun ConnectionTypeChooser(onSelectIr: () -> Unit, onSelectWifi: () -> Unit) {
+    val context = LocalContext.current
+    // Solo consulta al sistema; no emite ninguna señal.
+    val hasIr = remember { IrController(context).hasIrEmitter() }
     Column(
         modifier = Modifier.padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -109,7 +113,9 @@ private fun ConnectionTypeChooser(onSelectIr: () -> Unit, onSelectWifi: () -> Un
         ConnectionOptionCard(
             icon = Icons.Filled.SettingsRemote,
             title = "Infrarrojo",
-            subtitle = "TVs viejos, aires acondicionados, equipos de audio. Necesita que tu celular tenga emisor IR.",
+            subtitle = if (hasIr) "Control universal: busca solo el código de TVs, TV boxes y decodificadores que solo prenden por IR."
+            else "Tu celular no tiene emisor infrarrojo, así que esta opción no funcionaría. Usá Wi-Fi.",
+            enabled = hasIr,
             onClick = onSelectIr
         )
 
@@ -123,8 +129,8 @@ private fun ConnectionTypeChooser(onSelectIr: () -> Unit, onSelectWifi: () -> Un
 }
 
 @Composable
-private fun ConnectionOptionCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+private fun ConnectionOptionCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, enabled: Boolean = true) {
+    ElevatedCard(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -154,9 +160,9 @@ private fun IrSetupStep(repository: DeviceRepository, onDone: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            "El infrarrojo solo funciona si tu celular tiene un emisor IR físico " +
-                "(algunos Xiaomi, Samsung y Huawei más antiguos). Después de guardar, " +
-                "vas a poder cargar el código de cada botón dentro de la pantalla del control.",
+            "Control infrarrojo universal. " +
+                "Después de guardar, entrá al control y tocá \"Buscar código\": la app prueba " +
+                "los códigos de una base pública de marcas hasta que el equipo reaccione, y carga todos los botones.",
             style = MaterialTheme.typography.bodyMedium
         )
         OutlinedTextField(

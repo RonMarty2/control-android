@@ -1,77 +1,67 @@
 package com.rnd.remoto.ir
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.ConsumerIrManager
 import android.util.Log
 
 private const val TAG = "IrController"
 
+/** Whether this phone can transmit infrared, and why not when it can't. */
+class IrStatus(val available: Boolean, val message: String)
+
 class IrController(context: Context) {
 
+    private val appContext = context.applicationContext
     private val manager: ConsumerIrManager? =
-        context.applicationContext.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
+        appContext.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
 
     init {
-        Log.d(TAG, "ConsumerIrManager available: ${manager != null}, hasIrEmitter: ${manager?.hasIrEmitter()}")
+        Log.d(TAG, "ConsumerIrManager available: ${manager != null}, hasIrEmitter: ${hasIrEmitter()}")
     }
 
-    fun hasIrEmitter(): Boolean = manager?.hasIrEmitter() == true
-
-    fun sendNec(address: Int, command: Int): Result<Unit> = runCatching {
-        val mgr = manager ?: error("El sistema no expone un ConsumerIrManager en este celular")
-        if (!mgr.hasIrEmitter()) error("hasIrEmitter() devolvió false al momento de transmitir")
-        val pattern = NecEncoder.encode(address, command)
-        Log.d(
-            TAG,
-            "Transmitiendo NEC addr=0x${address.toString(16)} cmd=0x${command.toString(16)} " +
-                "freq=${NecEncoder.CARRIER_FREQUENCY_HZ} pattern(${pattern.size})=${pattern.joinToString(",")}"
-        )
-        mgr.transmit(NecEncoder.CARRIER_FREQUENCY_HZ, pattern)
-        Log.d(TAG, "transmit() retornó sin excepción")
-        Unit
-    }.onFailure {
-        Log.e(TAG, "Falló el envío IR", it)
+    /** Pure query: asking the system never makes the emitter fire. */
+    fun hasIrEmitter(): Boolean = try {
+        manager?.hasIrEmitter() == true
+    } catch (e: Exception) {
+        Log.e(TAG, "hasIrEmitter() falló", e)
+        false
     }
 
-    private fun parseHexByte(raw: String): Int? =
-        raw.trim().removePrefix("0x").removePrefix("0X").toIntOrNull(16)
-
-    /**
-     * codeHex format: either "AA,CC" (8-bit address + command, complement of the address is
-     * derived automatically, e.g. "07,02") or "LL,HH,CC" (extended address: the two address
-     * bytes are sent exactly as given, for remotes whose address bytes aren't complements of
-     * each other, e.g. "00,df,1c").
-     */
-    fun sendHexPair(codeHex: String): Result<Unit> {
-        val parts = codeHex.split(",")
-        return when (parts.size) {
-            2 -> {
-                val address = parseHexByte(parts[0])
-                    ?: return Result.failure(IllegalArgumentException("Dirección hexadecimal inválida: ${parts[0]}"))
-                val command = parseHexByte(parts[1])
-                    ?: return Result.failure(IllegalArgumentException("Comando hexadecimal inválido: ${parts[1]}"))
-                sendNec(address, command)
-            }
-            3 -> {
-                val addressLow = parseHexByte(parts[0])
-                    ?: return Result.failure(IllegalArgumentException("Dirección (byte bajo) inválida: ${parts[0]}"))
-                val addressHigh = parseHexByte(parts[1])
-                    ?: return Result.failure(IllegalArgumentException("Dirección (byte alto) inválida: ${parts[1]}"))
-                val command = parseHexByte(parts[2])
-                    ?: return Result.failure(IllegalArgumentException("Comando hexadecimal inválido: ${parts[2]}"))
-                sendNecExtended(addressLow, addressHigh, command)
-            }
-            else -> Result.failure(IllegalArgumentException("Formato inválido: $codeHex"))
+    fun status(): IrStatus {
+        if (hasIrEmitter()) return IrStatus(true, "Emisor infrarrojo detectado en este celular")
+        val declared = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR)
+        return if (manager == null && !declared) {
+            IrStatus(false, "Este celular no tiene emisor infrarrojo (la mayoría de los modelos actuales no lo traen).")
+        } else {
+            IrStatus(false, "El sistema no expone el emisor infrarrojo de este celular, así que la app no puede usarlo.")
         }
     }
 
-    private fun sendNecExtended(addressLow: Int, addressHigh: Int, command: Int): Result<Unit> = runCatching {
-        val mgr = manager ?: error("El sistema no expone un ConsumerIrManager en este celular")
-        if (!mgr.hasIrEmitter()) error("hasIrEmitter() devolvió false al momento de transmitir")
-        val pattern = NecEncoder.encodeExtended(addressLow, addressHigh, command)
-        mgr.transmit(NecEncoder.CARRIER_FREQUENCY_HZ, pattern)
-        Unit
-    }.onFailure {
-        Log.e(TAG, "Falló el envío IR extendido", it)
+    /** Pattern frequency adjusted to what the emitter hardware accepts (some only cover a range). */
+    private fun supportedFrequency(requested: Int): Int {
+        val ranges = try { manager?.carrierFrequencies } catch (e: Exception) { null }
+        if (ranges.isNullOrEmpty()) return requested
+        if (ranges.any { requested in it.minFrequency..it.maxFrequency }) return requested
+        return ranges
+            .flatMap { listOf(it.minFrequency, it.maxFrequency) }
+            .minByOrNull { kotlin.math.abs(it - requested) } ?: requested
     }
+
+    /** Sends any code understood by [IrCodec] (see its doc for formats). */
+    fun sendCode(code: String): Result<Unit> = IrCodec.encode(code).mapCatching { signal ->
+        val mgr = manager ?: error("El sistema no expone un ConsumerIrManager en este celular")
+        if (!mgr.hasIrEmitter()) error("Este celular no tiene emisor infrarrojo")
+        val frequency = supportedFrequency(signal.frequencyHz)
+        Log.d(TAG, "Transmitiendo $code freq=$frequency pattern(${signal.pattern.size})")
+        mgr.transmit(frequency, signal.pattern)
+    }.onFailure {
+        Log.e(TAG, "Falló el envío IR de $code", it)
+    }
+
+    fun sendNec(address: Int, command: Int): Result<Unit> =
+        sendCode("%02x,%02x".format(address and 0xFF, command and 0xFF))
+
+    /** Kept for callers that predate multi-protocol support; accepts every format of [sendCode]. */
+    fun sendHexPair(codeHex: String): Result<Unit> = sendCode(codeHex)
 }
