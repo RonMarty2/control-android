@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,7 +37,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.widget.Toast
+import com.rnd.remoto.widget.ControlWidgetReceiver
 import com.rnd.remoto.data.DeviceCategory
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
@@ -61,6 +67,7 @@ fun HomeScreen(
 ) {
     val devices by repository.devices.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var pendingDelete by remember { mutableStateOf<RemoteDevice?>(null) }
 
     Scaffold(
@@ -68,6 +75,17 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text("Control Remoto") },
                 actions = {
+                    IconButton(onClick = {
+                        // Pide al launcher colocar el widget (el sistema muestra una confirmación).
+                        val manager = AppWidgetManager.getInstance(context)
+                        if (manager.isRequestPinAppWidgetSupported) {
+                            manager.requestPinAppWidget(ComponentName(context, ControlWidgetReceiver::class.java), null, null)
+                        } else {
+                            Toast.makeText(context, "Mantené apretado el escritorio y elegí Widgets > Control Remoto", Toast.LENGTH_LONG).show()
+                        }
+                    }) {
+                        Icon(Icons.Default.Widgets, contentDescription = "Agregar widget al escritorio")
+                    }
                     IconButton(onClick = onOpenWallpaper) {
                         Icon(Icons.Default.Wallpaper, contentDescription = "Fondo de pantalla")
                     }

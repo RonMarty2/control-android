@@ -16,7 +16,7 @@ import com.rnd.remoto.R
 import com.rnd.remoto.data.DeviceRepository
 import com.rnd.remoto.data.DeviceType
 import com.rnd.remoto.ir.IrController
-import com.rnd.remoto.data.RemoteDevice
+import com.rnd.remoto.widget.RemoteActions
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
@@ -78,40 +78,15 @@ class LockScreenControlsService : Service() {
             val deviceId = premiumRepository.state.first().lastUsedDeviceId ?: return@launch
             val device = repository.devices.first().find { it.id == deviceId } ?: return@launch
 
-            if (device.type == DeviceType.IR) {
-                val code = device.irCodes[command.name] ?: return@launch
-                IrController(applicationContext).sendHexPair(code).onFailure {
-                    Log.e(TAG, "Comando IR desde pantalla de bloqueo falló", it)
-                }
-                return@launch
-            }
-
-            // Un solo controlador por dispositivo: crear uno nuevo en cada toque abría una
-            // conexión TLS nueva (lento) y dejaba la anterior sin cerrar.
-            if (cachedDeviceId != device.id || cachedDeviceKey(device) != cachedKey) {
-                cachedController?.close()
-                cachedController = controllerFactory.create(device)
-                cachedDeviceId = device.id
-                cachedKey = cachedDeviceKey(device)
-            }
-            val controller = cachedController ?: return@launch
-            controller.send(command).onFailure {
+            // Misma lógica que los widgets: un controlador por dispositivo y, al encender, infrarrojo
+            // si el equipo no responde en la red.
+            RemoteActions.send(applicationContext, device, command).onFailure {
                 Log.e(TAG, "Comando desde pantalla de bloqueo falló", it)
             }
         }
     }
 
-    private var cachedController: RemoteController? = null
-    private var cachedDeviceId: String? = null
-    private var cachedKey: String? = null
-
-    /** Cambia cuando el dispositivo se edita/reemparejó, para no reusar un cliente desactualizado. */
-    private fun cachedDeviceKey(device: RemoteDevice): String =
-        "${device.type}|${device.androidTvPaired}|${device.vizioAuthToken}"
-
     override fun onDestroy() {
-        cachedController?.close()
-        cachedController = null
         scope.cancel()
         super.onDestroy()
     }

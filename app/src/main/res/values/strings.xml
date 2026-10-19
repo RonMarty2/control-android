@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">Control Remoto</string>
     <string name="video_wallpaper_description">Video de fondo elegido en Control Remoto</string>
+    <string name="widget_control_description">Control remoto con encendido, cruceta, volumen e inicio</string>
+    <string name="widget_control_label">Control remoto</string>
 </resources>
