@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,12 +20,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.text.Normalizer
 import javax.net.ssl.SSLSocket
 
 private const val TAG = "AndroidTvRemote"
 private const val CONNECT_TIMEOUT_MS = 3000
 private const val READY_TIMEOUT_MS = 8000L
 private const val STALE_AFTER_MS = 20_000L
+private const val KEY_INTERVAL_MS = 25L
+private const val KEYCODE_ENTER = 66
 
 /**
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
@@ -206,6 +210,40 @@ class AndroidTvRemoteClient(
 
     override suspend fun launchApp(appLink: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching { sendWithReconnect(RemoteMessages.appLinkLaunchRequest(appLink)) }
+    }
+
+    /** Escribe en el campo de texto enfocado del TV mandando teclas una a una (sin necesitar los
+     * contadores del IME de Android TV). Se ignoran mayúsculas/acentos: "Ñandú" -> "nandu". */
+    override suspend fun sendText(text: String, submit: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val keys = textToKeyCodes(text)
+            if (keys.isEmpty() && !submit) error("No hay texto para enviar")
+            for (key in keys) {
+                sendWithReconnect(RemoteMessages.keyInject(key))
+                delay(KEY_INTERVAL_MS)
+            }
+            if (submit) sendWithReconnect(RemoteMessages.keyInject(KEYCODE_ENTER))
+        }
+    }
+
+    private fun textToKeyCodes(text: String): List<Int> {
+        val plain = Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        return plain.mapNotNull { ch ->
+            when (ch) {
+                in 'a'..'z' -> 29 + (ch - 'a')
+                in '0'..'9' -> 7 + (ch - '0')
+                ' ' -> 62
+                '.' -> 56
+                ',' -> 55
+                '-' -> 69
+                '\'' -> 75
+                '/' -> 76
+                '@' -> 77
+                '+' -> 81
+                else -> null
+            }
+        }
     }
 
     override fun close() {

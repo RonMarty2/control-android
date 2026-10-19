@@ -1,6 +1,16 @@
 package com.rnd.remoto.ui.screens
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -211,6 +221,7 @@ private fun NetworkRemoteBody(
 ) {
     val scope = rememberCoroutineScope()
     var showIrPowerDialog by remember { mutableStateOf(false) }
+    var showTextDialog by remember { mutableStateOf(false) }
 
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
@@ -278,11 +289,16 @@ private fun NetworkRemoteBody(
 
         if (showAppShortcuts) {
             RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
+            RemoteTextButton(text = "Teclado / Voz", onClick = { showTextDialog = true })
         }
 
         if (onRepair != null) {
             TextButton(onClick = onRepair) { Text("¿No responde? Volver a emparejar") }
         }
+    }
+
+    if (showTextDialog) {
+        TextInputDialog(controller = controller, onResult = onResult, onDismiss = { showTextDialog = false })
     }
 
     if (showIrPowerDialog) {
@@ -797,4 +813,72 @@ private fun VizioPairingBody(
             Text(if (isBusy) "Verificando..." else "Confirmar código")
         }
     }
+}
+
+@Composable
+private fun TextInputDialog(controller: RemoteController?, onResult: (Result<Unit>) -> Unit, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf("") }
+
+    fun submit() {
+        if (text.isBlank()) return
+        val toSend = text
+        scope.launch {
+            onResult(controller?.sendText(toSend, submit = true) ?: Result.failure(IllegalStateException("Dispositivo no configurado")))
+        }
+        text = ""
+        onDismiss()
+    }
+
+    // Reconocimiento de voz del celular (Google): el resultado se escribe en el TV como texto.
+    // No usa el micrófono del TV ni requiere permiso de micrófono en esta app.
+    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (result.resultCode == Activity.RESULT_OK && !spoken.isNullOrBlank()) text = spoken
+    }
+    fun startVoice() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Decí qué querés buscar")
+        }
+        try {
+            voiceLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            onResult(Result.failure(IllegalStateException("Este celular no tiene reconocimiento de voz disponible")))
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Escribir en el TV") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "En el TV, abrí la búsqueda (ej. YouTube) y dejá el cursor en el cuadro de texto. " +
+                        "Después escribí acá con el teclado del celular o tocá el micrófono.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Texto a buscar") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submit() }),
+                    trailingIcon = {
+                        IconButton(onClick = { startVoice() }) {
+                            Icon(Icons.Filled.Mic, contentDescription = "Hablar")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Se envía sin mayúsculas ni acentos (alcanza para buscar).",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        },
+        confirmButton = { Button(enabled = text.isNotBlank(), onClick = { submit() }) { Text("Enviar y buscar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
 }

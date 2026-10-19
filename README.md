@@ -149,6 +149,7 @@ app/src/main/java/com/rnd/remoto/
 
 ## 9. Funciones extra y solución de problemas
 
+- **Teclado y voz (Android TV)**: botón "Teclado / Voz" en el control. Con el cursor en un cuadro de búsqueda del TV (ej. YouTube), escribí con el teclado del celular o dictá con el micrófono; la app manda el texto tecla por tecla (sin mayúsculas ni acentos). El micrófono usado es el del celular.
 - **Encendido por IR de respaldo**: en equipos que no responden por Wi-Fi cuando están apagados, se puede cargar (o buscar automáticamente) un código IR de encendido; el botón de power lo usa si falla el Wi-Fi.
 - **Controles en pantalla de bloqueo** (premium) y **fondos de pantalla** (foto/video).
 - **Reconexión automática (Android TV)**: al cambiar de Wi-Fi, volver de inactividad o apagar/encender el TV, la app detecta la conexión caída, se reconecta (re-buscando el TV en la red si cambió su IP) y reintenta el comando, sin tener que cerrar la app. Esto cubre el error "Broken pipe".

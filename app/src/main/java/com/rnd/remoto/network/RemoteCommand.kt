@@ -24,5 +24,10 @@ interface RemoteController {
     suspend fun launchApp(appLink: String): Result<Unit> =
         Result.failure(UnsupportedOperationException("Este dispositivo no soporta abrir apps"))
 
+    /** Types [text] into whatever text field is focused on the device (e.g. a YouTube search
+     * box). Only Android TV supports this today. */
+    suspend fun sendText(text: String, submit: Boolean = false): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Este dispositivo no soporta escribir texto"))
+
     fun close() {}
 }
