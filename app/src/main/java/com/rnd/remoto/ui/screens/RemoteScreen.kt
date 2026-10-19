@@ -7,6 +7,8 @@ import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Mic
@@ -220,8 +222,18 @@ private fun NetworkRemoteBody(
 ) {
     val scope = rememberCoroutineScope()
     var showIrPowerDialog by remember { mutableStateOf(false) }
-    var showTextDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    // Mantener la conexión abierta mientras se ve el control: así el TV puede avisar cuando se
+    // enfoca un cuadro de texto o se toca el micrófono, aunque todavía no se haya tocado ningún botón.
+    LaunchedEffect(controller) {
+        val c = controller ?: return@LaunchedEffect
+        if (!showAppShortcuts) return@LaunchedEffect
+        while (isActive) {
+            val ok = c.connect()
+            delay(if (ok) 5_000 else 20_000)
+        }
+    }
 
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
@@ -258,10 +270,12 @@ private fun NetworkRemoteBody(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceEvenly
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (showAppShortcuts) TvTextBar(controller = controller, onResult = onResult)
+
         RemoteIconButton(
             icon = Icons.Filled.PowerSettingsNew,
             contentDescription = "Encender/Apagar",
@@ -301,7 +315,6 @@ private fun NetworkRemoteBody(
 
         if (showAppShortcuts) {
             RemoteTextButton(text = "Abrir Jellyfin", onClick = { launchApp("org.jellyfin.androidtv") })
-            RemoteTextButton(text = "Teclado / Voz", onClick = { showTextDialog = true })
         }
 
         if (onRepair != null) {
@@ -309,9 +322,6 @@ private fun NetworkRemoteBody(
         }
     }
 
-    if (showTextDialog) {
-        TextInputDialog(controller = controller, onResult = onResult, onDismiss = { showTextDialog = false })
-    }
 
     if (showIrPowerDialog) {
         IrSearchDialog(
@@ -585,72 +595,4 @@ private fun VizioPairingBody(
             Text(if (isBusy) "Verificando..." else "Confirmar código")
         }
     }
-}
-
-@Composable
-private fun TextInputDialog(controller: RemoteController?, onResult: (Result<Unit>) -> Unit, onDismiss: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var text by remember { mutableStateOf("") }
-
-    fun submit() {
-        if (text.isBlank()) return
-        val toSend = text
-        scope.launch {
-            onResult(controller?.sendText(toSend, submit = true) ?: Result.failure(IllegalStateException("Dispositivo no configurado")))
-        }
-        text = ""
-        onDismiss()
-    }
-
-    // Reconocimiento de voz del celular (Google): el resultado se escribe en el TV como texto.
-    // No usa el micrófono del TV ni requiere permiso de micrófono en esta app.
-    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (result.resultCode == Activity.RESULT_OK && !spoken.isNullOrBlank()) text = spoken
-    }
-    fun startVoice() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Decí qué querés buscar")
-        }
-        try {
-            voiceLauncher.launch(intent)
-        } catch (e: ActivityNotFoundException) {
-            onResult(Result.failure(IllegalStateException("Este celular no tiene reconocimiento de voz disponible")))
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Escribir en el TV") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "En el TV, abrí la búsqueda (ej. YouTube) y dejá el cursor en el cuadro de texto. " +
-                        "Después escribí acá con el teclado del celular o tocá el micrófono.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("Texto a buscar") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit() }),
-                    trailingIcon = {
-                        IconButton(onClick = { startVoice() }) {
-                            Icon(Icons.Filled.Mic, contentDescription = "Hablar")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    "Se envía sin mayúsculas ni acentos (alcanza para buscar).",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        },
-        confirmButton = { Button(enabled = text.isNotBlank(), onClick = { submit() }) { Text("Enviar y buscar") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
 }

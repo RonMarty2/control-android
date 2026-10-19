@@ -2,6 +2,7 @@ package com.rnd.remoto.network.androidtv
 
 import android.content.Context
 import android.util.Log
+import com.rnd.remoto.network.ImeEvent
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.RemoteController
@@ -11,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -29,6 +32,7 @@ private const val READY_TIMEOUT_MS = 8000L
 private const val STALE_AFTER_MS = 20_000L
 private const val KEY_INTERVAL_MS = 25L
 private const val KEYCODE_ENTER = 66
+private const val KEYCODE_DEL = 67
 
 /**
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
@@ -175,9 +179,75 @@ class AndroidTvRemoteClient(
             fields.has(RemoteMessages.FIELD_REMOTE_START) -> {
                 if (!readyDeferred.isCompleted) readyDeferred.complete(true)
             }
+            fields.has(RemoteMessages.FIELD_REMOTE_IME_KEY_INJECT) -> {
+                val sub = fields.submessage(RemoteMessages.FIELD_REMOTE_IME_KEY_INJECT)
+                Log.d(TAG, "IME key_inject: ${describe(fields)}")
+                onTextFieldMessage(sub)
+            }
+            fields.has(RemoteMessages.FIELD_REMOTE_IME_SHOW_REQUEST) -> {
+                val sub = fields.submessage(RemoteMessages.FIELD_REMOTE_IME_SHOW_REQUEST)
+                Log.d(TAG, "IME show_request: ${describe(fields)}")
+                onTextFieldMessage(sub, forceShow = true)
+            }
+            fields.has(RemoteMessages.FIELD_REMOTE_VOICE_BEGIN) -> {
+                val sessionId = fields.submessage(RemoteMessages.FIELD_REMOTE_VOICE_BEGIN)?.varint(1)?.toInt() ?: 0
+                Log.d(TAG, "VOICE begin: ${describe(fields)}")
+                _imeEvents.tryEmit(ImeEvent.VoiceRequested(sessionId))
+            }
+            !fields.has(RemoteMessages.FIELD_REMOTE_PING_RESPONSE) -> Log.d(TAG, "Mensaje sin manejar: ${describe(fields)}")
         }
     }
 
+
+    // ---- IME (teclado) y voz: el TV avisa cuando se enfoca un cuadro de texto o piden el micrófono ----
+
+    private val _imeEvents = MutableSharedFlow<ImeEvent>(extraBufferCapacity = 16)
+    override val imeEvents: Flow<ImeEvent> get() = _imeEvents
+
+    /** Contadores del último campo de texto que anunció el TV; hacen falta para editarlo en vivo. */
+    @Volatile private var imeCounter = 0
+    @Volatile private var fieldCounter = 0
+    @Volatile private var imeSessionKnown = false
+
+    private fun describe(fields: List<ProtoField>): String = fields.joinToString(" ") { f ->
+        val raw = f.raw
+        when (raw) {
+            is ByteArray -> "#${f.number}=[${raw.take(60).joinToString("") { "%02x".format(it) }}]"
+            else -> "#${f.number}=$raw"
+        }
+    }
+
+    private fun ByteArray.utf8(): String = toString(Charsets.UTF_8)
+
+    private fun onTextFieldMessage(sub: List<ProtoField>?, forceShow: Boolean = false) {
+        if (sub == null) return
+        val appInfo = sub.submessage(1)
+        val textStatus = sub.submessage(2)
+        imeCounter = appInfo?.varint(1)?.toInt() ?: imeCounter
+        fieldCounter = textStatus?.varint(1)?.toInt() ?: fieldCounter
+        if (textStatus != null) imeSessionKnown = true
+        val text = textStatus?.bytes(2)?.utf8().orEmpty()
+        val label = textStatus?.bytes(6)?.utf8()
+        Log.d(TAG, "Campo de texto: imeCounter=$imeCounter fieldCounter=$fieldCounter texto='$text' label=$label forceShow=$forceShow")
+        if (textStatus != null || forceShow) _imeEvents.tryEmit(ImeEvent.TextFieldFocused(text, label))
+    }
+
+    override suspend fun connect(): Boolean = withContext(Dispatchers.IO) { ensureConnected() }
+
+    override suspend fun setText(text: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (imeSessionKnown) {
+                sendWithReconnect(RemoteMessages.imeBatchEdit(imeCounter, fieldCounter, text))
+            } else {
+                // El TV no anunció ningún campo: caemos a teclear tecla por tecla.
+                sendText(text, submit = false).getOrThrow()
+            }
+        }
+    }
+
+    override suspend fun endVoice(sessionId: Int): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching { sendWithReconnect(RemoteMessages.voiceEnd(sessionId)) }
+    }
     private suspend fun writeMessage(sslSocket: SSLSocket, message: ByteArray) {
         writeMutex.withLock {
             ProtoFraming.writeFramed(sslSocket.outputStream, message)
@@ -225,6 +295,23 @@ class AndroidTvRemoteClient(
                 delay(KEY_INTERVAL_MS)
             }
             if (submit) sendWithReconnect(RemoteMessages.keyInject(KEYCODE_ENTER))
+        }
+    }
+
+    override suspend fun editText(previous: String, current: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val before = textToKeyCodes(previous)
+            val after = textToKeyCodes(current)
+            var common = 0
+            while (common < before.size && common < after.size && before[common] == after[common]) common++
+            repeat(before.size - common) {
+                sendWithReconnect(RemoteMessages.keyInject(KEYCODE_DEL))
+                delay(KEY_INTERVAL_MS)
+            }
+            for (key in after.drop(common)) {
+                sendWithReconnect(RemoteMessages.keyInject(key))
+                delay(KEY_INTERVAL_MS)
+            }
         }
     }
 
