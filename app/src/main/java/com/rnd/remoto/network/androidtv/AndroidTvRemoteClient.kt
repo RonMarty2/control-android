@@ -64,9 +64,11 @@ class AndroidTvRemoteClient(
         return try {
             // Timeout explícito: sin él, una IP de otra red (p. ej. tras cambiar de Wi-Fi) deja
             // el connect colgado ~2 minutos en vez de pasar rápido a re-buscar el equipo.
-            plain = Socket().apply { connect(InetSocketAddress(targetIp, port), CONNECT_TIMEOUT_MS) }
+            val rawSocket = Socket()
+            plain = rawSocket
+            rawSocket.connect(InetSocketAddress(targetIp, port), CONNECT_TIMEOUT_MS)
             val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory
-                .createSocket(plain, targetIp, port, true) as SSLSocket
+                .createSocket(rawSocket, targetIp, port, true) as SSLSocket
             sslSocket.enabledProtocols = sslSocket.supportedProtocols
             sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
             sslSocket.soTimeout = CONNECT_TIMEOUT_MS

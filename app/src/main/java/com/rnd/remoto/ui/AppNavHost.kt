@@ -1,5 +1,7 @@
 package com.rnd.remoto.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -26,7 +28,16 @@ fun AppNavHost(
 ) {
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "home") {
+    // Sin animaciones: el crossfade por defecto se ve entrecortado/granulado en tablets y celulares
+    // con GPU modesta, y una app de control remoto necesita cambiar de pantalla al instante.
+    NavHost(
+        navController = navController,
+        startDestination = "home",
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None }
+    ) {
         composable("home") {
             HomeScreen(
                 repository = repository,
