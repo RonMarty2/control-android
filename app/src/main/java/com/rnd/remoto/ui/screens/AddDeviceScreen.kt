@@ -1,6 +1,8 @@
 package com.rnd.remoto.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -160,9 +162,8 @@ private fun IrSetupStep(repository: DeviceRepository, onDone: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            "Control infrarrojo universal. " +
-                "Después de guardar, entrá al control y tocá \"Buscar código\": la app prueba " +
-                "los códigos de una base pública de marcas hasta que el equipo reaccione, y carga todos los botones.",
+            "Después de guardar, abre el control y toca \"Buscar código\": la app prueba códigos " +
+                "hasta que el equipo reaccione y carga todos los botones.",
             style = MaterialTheme.typography.bodyMedium
         )
         OutlinedTextField(
@@ -217,7 +218,7 @@ private fun WifiDiscoverStep(repository: DeviceRepository, onDone: () -> Unit) {
                 Text("Buscando dispositivos en tu red Wi-Fi...")
             }
         } else if (scanResults.isNotEmpty()) {
-            Text("Encontramos esto en tu red:", style = MaterialTheme.typography.titleSmall)
+            Text("Encontramos esto en tu red (toca uno para agregarlo):", style = MaterialTheme.typography.titleSmall)
             scanResults.forEach { result ->
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -259,6 +260,7 @@ private fun WifiDiscoverStep(repository: DeviceRepository, onDone: () -> Unit) {
     if (result != null) {
         NameAndSaveDialog(
             title = "Nombrá tu ${shortLabel(result.guessedType)}",
+            suggestion = shortLabel(result.guessedType),
             onDismiss = { pendingResult = null },
             onConfirm = { name ->
                 scope.launch {
@@ -281,8 +283,8 @@ private fun WifiDiscoverStep(repository: DeviceRepository, onDone: () -> Unit) {
 }
 
 @Composable
-private fun NameAndSaveDialog(title: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var name by remember { mutableStateOf("") }
+private fun NameAndSaveDialog(title: String, suggestion: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var name by remember { mutableStateOf(suggestion) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -322,6 +324,7 @@ private fun categoryLabel(category: DeviceCategory): String = when (category) {
     DeviceCategory.INFRARROJO -> "Infrarrojo"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
@@ -340,7 +343,7 @@ private fun ManualWifiForm(repository: DeviceRepository, onDone: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WIFI_BRANDS.groupBy { it.category() }.forEach { (category, types) ->
             Text(categoryLabel(category), style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 types.forEach { type ->
                     FilterChip(
                         selected = selectedType == type,

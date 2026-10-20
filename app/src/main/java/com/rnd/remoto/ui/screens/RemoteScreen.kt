@@ -3,6 +3,9 @@ package com.rnd.remoto.ui.screens
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.res.Configuration
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.platform.LocalConfiguration
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -312,11 +315,9 @@ private fun NetworkRemoteBody(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    val top: @Composable ColumnScope.() -> Unit = {
         ConnectionBanner(
             state = connection,
             hasIrFallback = !device.irCodes["POWER"].isNullOrBlank(),
@@ -338,7 +339,9 @@ private fun NetworkRemoteBody(
                 else "Encendido por IR configurado (editar)"
             )
         }
+    }
 
+    val keypad: @Composable ColumnScope.() -> Unit = {
         RemoteKeypad(
             onUp = { press(RemoteCommand.UP) }, onDown = { press(RemoteCommand.DOWN) },
             onLeft = { press(RemoteCommand.LEFT) }, onRight = { press(RemoteCommand.RIGHT) },
@@ -348,7 +351,9 @@ private fun NetworkRemoteBody(
             onVolumeUp = { press(RemoteCommand.VOLUME_UP) }, onVolumeDown = { press(RemoteCommand.VOLUME_DOWN) },
             onChannelUp = { press(RemoteCommand.CHANNEL_UP) }, onChannelDown = { press(RemoteCommand.CHANNEL_DOWN) }
         )
+    }
 
+    val bottom: @Composable ColumnScope.() -> Unit = {
         if (showAppShortcuts) {
             JellyfinButton(onClick = { scope.launch { onResult(controller?.openApp(JELLYFIN_PACKAGE) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) } })
         }
@@ -358,6 +363,30 @@ private fun NetworkRemoteBody(
         }
     }
 
+    if (landscape) {
+        // De lado: estado, encendido y apps a la izquierda; el teclado completo a la derecha.
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) { top(); bottom() }
+            Column(
+                modifier = Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)
+            ) { keypad() }
+        }
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) { top(); keypad(); bottom() }
+    }
 
     if (showIrPowerDialog) {
         IrSearchDialog(
