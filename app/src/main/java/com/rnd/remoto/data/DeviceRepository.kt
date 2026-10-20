@@ -27,7 +27,11 @@ class DeviceRepository(private val context: Context) {
             val current = prefs[key]?.let {
                 runCatching { json.decodeFromString(serializer, it) }.getOrDefault(emptyList())
             } ?: emptyList()
-            val updated = current.filterNot { it.id == device.id } + device
+            // Volver a guardar un equipo existente (p. ej. al re-agregarlo con otra IP) no debe borrar
+            // los códigos IR que ya se habían buscado y guardado.
+            val previous = current.firstOrNull { it.id == device.id }
+            val merged = if (previous == null) device else device.copy(irCodes = previous.irCodes + device.irCodes)
+            val updated = current.filterNot { it.id == device.id } + merged
             prefs[key] = json.encodeToString(serializer, updated)
         }
     }
