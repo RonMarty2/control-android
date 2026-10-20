@@ -270,6 +270,15 @@ fun IrSearchDialog(
                                 Text(if (availableCount > 0) "Buscar automáticamente" else "No hay códigos para esa marca")
                             }
                         }
+                        if (status.available) {
+                            TextButton(
+                                onClick = {
+                                    // Ráfaga de unos 4 s: se ve como destello violeta en la cámara de otro celular.
+                                    scope.launch { repeat(12) { irController.sendCode("nec:00ff00ff"); delay(330) } }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Probar emisor (míralo con la cámara de otro celular)") }
+                        }
                         TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
                             Text(if (advanced) "Ocultar opciones avanzadas" else "Opciones avanzadas")
                         }

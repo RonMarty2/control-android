@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.SettingsRemote
@@ -18,6 +19,13 @@ import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -82,9 +90,11 @@ fun HomeScreen(
     val devices by repository.devices.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var pendingDelete by remember { mutableStateOf<RemoteDevice?>(null) }
+    var pendingEdit by remember { mutableStateOf<RemoteDevice?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Control Remoto") },
@@ -153,7 +163,18 @@ fun HomeScreen(
                         DeviceRow(
                             device = device,
                             onOpen = { onOpenDevice(device.id) },
-                            onDelete = { pendingDelete = device }
+                            onEdit = { pendingEdit = device },
+                            onDelete = {
+                                scope.launch {
+                                    repository.deleteDevice(device.id)
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "\"${device.name}\" eliminado",
+                                        actionLabel = "Deshacer",
+                                        duration = SnackbarDuration.Long
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) repository.saveDevice(device)
+                                }
+                            }
                         )
                     }
                 }
@@ -161,31 +182,79 @@ fun HomeScreen(
         }
     }
 
-    pendingDelete?.let { device ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("¿Eliminar \"${device.name}\"?") },
-            text = {
-                Text(
-                    if (device.irCodes.isNotEmpty())
-                        "Se pierde el emparejamiento y los ${device.irCodes.size} código(s) IR guardados de este dispositivo. No se puede deshacer."
-                    else
-                        "Se pierde el emparejamiento de este dispositivo."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch { repository.deleteDevice(device.id) }
-                    pendingDelete = null
-                }) { Text("Eliminar") }
-            },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") } }
+    pendingEdit?.let { device ->
+        EditDeviceDialog(
+            device = device,
+            onDismiss = { pendingEdit = null },
+            onSave = { transform ->
+                scope.launch { repository.updateDevice(device.id, transform) }
+                pendingEdit = null
+            }
         )
     }
 }
 
 @Composable
-private fun DeviceRow(device: RemoteDevice, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun EditDeviceDialog(
+    device: RemoteDevice,
+    onDismiss: () -> Unit,
+    onSave: ((RemoteDevice) -> RemoteDevice) -> Unit
+) {
+    var name by remember { mutableStateOf(device.name) }
+    var ip by remember { mutableStateOf(device.ip.orEmpty()) }
+    var mac by remember { mutableStateOf(device.mac.orEmpty()) }
+    var clearIr by remember { mutableStateOf(false) }
+    val hasIr = !device.irCodes["POWER"].isNullOrBlank()
+    val macOk = mac.isBlank() || Regex("^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$").matches(mac.trim())
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Editar dispositivo") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it }, singleLine = true,
+                    label = { Text("Nombre") }, modifier = Modifier.fillMaxWidth()
+                )
+                if (device.ip != null) {
+                    OutlinedTextField(
+                        value = ip, onValueChange = { ip = it }, singleLine = true,
+                        label = { Text("Dirección IP") }, modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (device.type != DeviceType.IR) {
+                    OutlinedTextField(
+                        value = mac, onValueChange = { mac = it }, singleLine = true, isError = !macOk,
+                        label = { Text("MAC (opcional, para encender por red)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (hasIr) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = clearIr, onCheckedChange = { clearIr = it })
+                        Text("Quitar el código IR guardado", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = name.isNotBlank() && macOk, onClick = {
+                onSave { d ->
+                    d.copy(
+                        name = name.trim(),
+                        ip = if (d.ip != null) ip.trim().ifBlank { d.ip } else null,
+                        mac = mac.trim().ifBlank { null },
+                        irCodes = if (clearIr) emptyMap() else d.irCodes
+                    )
+                }
+            }) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+@Composable
+private fun DeviceRow(device: RemoteDevice, onOpen: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -236,6 +305,11 @@ private fun DeviceRow(device: RemoteDevice, onOpen: () -> Unit, onDelete: () -> 
                         Icon(Icons.Default.MoreVert, contentDescription = "Más opciones")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Editar") },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            onClick = { menuOpen = false; onEdit() }
+                        )
                         DropdownMenuItem(
                             text = { Text("Eliminar") },
                             leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },

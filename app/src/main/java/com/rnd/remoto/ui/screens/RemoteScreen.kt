@@ -92,6 +92,7 @@ import com.rnd.remoto.data.RemoteDevice
 import com.rnd.remoto.ir.IrController
 import com.rnd.remoto.network.NetworkScanner
 import com.rnd.remoto.network.RemoteCommand
+import com.rnd.remoto.network.WolClient
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
 import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
@@ -292,12 +293,18 @@ private fun NetworkRemoteBody(
             // Con código IR cargado, si el equipo no responde en la red (apagado del todo) mandamos
             // el IR de una vez, sin esperar a que la conexión Wi-Fi agote sus reintentos.
             val storedIr = device.irCodes["POWER"]
-            if (!storedIr.isNullOrBlank() && irController.hasIrEmitter()) {
+            val wolMac = device.mac?.takeIf { it.isNotBlank() }
+            val canIr = !storedIr.isNullOrBlank() && irController.hasIrEmitter()
+            if (canIr || wolMac != null) {
                 val ip = device.ip
                 val port = controlPortFor(device)
                 val reachable = ip != null && port != null && NetworkScanner(context).isReachable(ip, port, 800)
                 if (!reachable) {
-                    onResult(irController.sendCode(storedIr))
+                    // Apagado del todo: Wake-on-LAN (si hay MAC) despierta equipos en espera con red;
+                    // el IR cubre los que no. Se mandan ambos: si uno no aplica, el otro no estorba.
+                    val wol = wolMac?.let { WolClient(it).send(RemoteCommand.POWER) }
+                    val ir = if (canIr) irController.sendCode(storedIr!!) else null
+                    onResult(ir ?: wol ?: Result.success(Unit))
                     return@launch
                 }
             }
