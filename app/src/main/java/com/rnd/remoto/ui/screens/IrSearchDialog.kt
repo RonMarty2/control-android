@@ -49,7 +49,14 @@ private const val BOOT_WINDOW_CODES = 25
 private const val AUTO_WAIT_S = 7
 
 /** Modo automático: segundos que se espera a que el equipo vuelva a la red tras re-prenderlo. */
-private const val CONFIRM_WAIT_S = 70
+private const val CONFIRM_WAIT_S = 120
+
+/**
+ * Modo automático: segundos que el equipo debe seguir fuera de la red antes de re-prenderlo. Un
+ * equipo que ya se apagó del todo ignora la señal si todavía se está cerrando; y si vuelve solo
+ * en este lapso, el código no fue lo que lo apagó (falso positivo).
+ */
+private const val SETTLE_S = 8
 
 private enum class Phase { SETUP, SWEEPING, CONFIRMING, STEPPING, DONE, FINISHED }
 
@@ -157,9 +164,21 @@ fun IrSearchDialog(
                         if (!scanner!!.isReachable(target!!.first, target.second)) gone = true
                     }
                     if (gone) {
-                        // Se apagó: lo volvemos a prender con el mismo código para confirmar.
+                        // Se apagó: esperamos a que termine de cerrarse. Si reaparece solo, este
+                        // código no lo apagó (se reinició o se reconectó por otra causa).
                         phase = Phase.CONFIRMING
-                        delay(2000)
+                        var cameBackAlone = false
+                        var settled = 0
+                        while (settled < SETTLE_S && !cameBackAlone) {
+                            delay(1000)
+                            settled++
+                            if (scanner!!.isReachable(target!!.first, target.second)) cameBackAlone = true
+                        }
+                        if (cameBackAlone) {
+                            phase = Phase.SWEEPING
+                            i++
+                            continue
+                        }
                         irController.sendCode(candidates[i].code)
                         var back = false
                         var w = 0

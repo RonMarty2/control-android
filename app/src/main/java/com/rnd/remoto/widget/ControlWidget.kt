@@ -12,6 +12,9 @@ import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.material3.ColorProviders
+import com.rnd.remoto.ui.theme.DarkColors
+import com.rnd.remoto.ui.theme.LightColors
 import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.action.ActionParameters
@@ -68,7 +71,7 @@ class ControlWidget : GlanceAppWidget() {
         val device = RemoteActions.resolveDevice(context, prefs[WIDGET_DEVICE_KEY])
         val online = device?.let { RemoteActions.isOnline(context, it) } ?: false
         provideContent {
-            GlanceTheme { ControlContent(device, online) }
+            GlanceTheme(colors = ColorProviders(light = LightColors, dark = DarkColors)) { ControlContent(device, online) }
         }
     }
 }

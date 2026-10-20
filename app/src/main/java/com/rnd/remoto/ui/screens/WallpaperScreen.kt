@@ -128,6 +128,7 @@ fun WallpaperScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            Text("Fondo de pantalla", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Poné una foto o un video como fondo de pantalla de tu celular. Gratis podés " +
                     "elegir 1 foto y 1 video; para cambiarlos de nuevo hace falta la versión premium.",
@@ -160,6 +161,7 @@ fun WallpaperScreen(
                 Text(if (currentState.videoWallpaperUri == null) "Elegir video de fondo" else "Cambiar video de fondo")
             }
 
+            Text("Pantalla de bloqueo", style = MaterialTheme.typography.titleMedium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
@@ -207,6 +209,7 @@ fun WallpaperScreen(
             }
 
             if (!isPremium) {
+                Text("Premium", style = MaterialTheme.typography.titleMedium)
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Control Remoto Premium", style = MaterialTheme.typography.titleMedium)

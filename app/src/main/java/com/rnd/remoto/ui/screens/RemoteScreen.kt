@@ -277,7 +277,14 @@ private fun NetworkRemoteBody(
     fun launchApp(appLink: String) {
         scope.launch { onResult(controller?.launchApp(appLink) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
     }
+    var lastPowerAt by remember { mutableStateOf(0L) }
     fun pressPower() {
+        val now = System.currentTimeMillis()
+        if (now - lastPowerAt < 3_000) {
+            onResult(Result.failure(IllegalStateException("Ya se envió el encendido: espera unos segundos.")))
+            return
+        }
+        lastPowerAt = now
         scope.launch {
             // Con código IR cargado, si el equipo no responde en la red (apagado del todo) mandamos
             // el IR de una vez, sin esperar a que la conexión Wi-Fi agote sus reintentos.
