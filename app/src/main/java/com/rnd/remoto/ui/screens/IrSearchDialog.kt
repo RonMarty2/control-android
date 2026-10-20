@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -289,6 +290,17 @@ fun IrSearchDialog(
                             "Probando código ${index + 1} de ${candidates.size}",
                             style = MaterialTheme.typography.titleSmall
                         )
+                        LinearProgressIndicator(
+                            progress = { (index + 1f) / candidates.size.coerceAtLeast(1) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        // Peor caso: cada código espera AUTO_WAIT_S (automático) o STEP_MS (manual).
+                        val secondsLeft = (candidates.size - index - 1) *
+                            (if (autoMode) AUTO_WAIT_S.toDouble() else STEP_MS / 1000.0)
+                        Text(
+                            "Quedan como máximo ~${(secondsLeft / 60).toInt().coerceAtLeast(1)} min",
+                            style = MaterialTheme.typography.labelSmall
+                        )
                         if (e != null && e.brands.isNotEmpty()) {
                             Text("Marcas: ${e.brands.take(4).joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
                         }
@@ -310,7 +322,7 @@ fun IrSearchDialog(
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Reaccionó (se prendió o apagó)") }
                         OutlinedButton(onClick = { stop(); phase = Phase.SETUP }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Detener")
+                            Text("Detener búsqueda")
                         }
                     }
 

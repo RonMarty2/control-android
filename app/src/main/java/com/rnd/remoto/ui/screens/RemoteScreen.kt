@@ -28,6 +28,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
@@ -71,7 +78,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.rnd.remoto.data.DeviceRepository
@@ -223,15 +232,42 @@ private fun NetworkRemoteBody(
     val scope = rememberCoroutineScope()
     var showIrPowerDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    var connection by remember(device.id) { mutableStateOf<ConnectionState?>(null) }
 
     // Mantener la conexión abierta mientras se ve el control: así el TV puede avisar cuando se
     // enfoca un cuadro de texto o se toca el micrófono, aunque todavía no se haya tocado ningún botón.
+    // De paso sabemos si el equipo responde, está apagado, o ya no nos reconoce (hay que re-emparejar).
     LaunchedEffect(controller) {
         val c = controller ?: return@LaunchedEffect
         if (!showAppShortcuts) return@LaunchedEffect
+        val scanner = NetworkScanner(context)
+        var failures = 0
         while (isActive) {
             val ok = c.connect()
+            if (ok) {
+                failures = 0
+                connection = ConnectionState.ONLINE
+            } else {
+                failures++
+                val ip = device.ip
+                val port = controlPortFor(device)
+                val reachable = ip != null && port != null && scanner.isReachable(ip, port, 800)
+                // El puerto responde pero el handshake falla repetido: el TV rechaza nuestro certificado.
+                connection = if (reachable && failures >= 2) ConnectionState.NEEDS_PAIRING else ConnectionState.OFFLINE
+            }
             delay(if (ok) 5_000 else 20_000)
+        }
+    }
+
+    // Equipos que no mantienen conexión abierta: solo comprobamos si contestan.
+    LaunchedEffect(device.id, device.ip) {
+        if (showAppShortcuts) return@LaunchedEffect
+        val ip = device.ip ?: return@LaunchedEffect
+        val port = controlPortFor(device) ?: return@LaunchedEffect
+        val scanner = NetworkScanner(context)
+        while (isActive) {
+            connection = if (scanner.isReachable(ip, port, 800)) ConnectionState.ONLINE else ConnectionState.OFFLINE
+            delay(10_000)
         }
     }
 
@@ -274,6 +310,12 @@ private fun NetworkRemoteBody(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        ConnectionBanner(
+            state = connection,
+            hasIrFallback = !device.irCodes["POWER"].isNullOrBlank(),
+            onRepair = onRepair
+        )
+
         if (showAppShortcuts) TvTextBar(controller = controller, onResult = onResult)
 
         RemoteIconButton(
@@ -290,28 +332,15 @@ private fun NetworkRemoteBody(
             )
         }
 
-        BigDPad(
+        RemoteKeypad(
             onUp = { press(RemoteCommand.UP) }, onDown = { press(RemoteCommand.DOWN) },
             onLeft = { press(RemoteCommand.LEFT) }, onRight = { press(RemoteCommand.RIGHT) },
-            onCenter = { press(RemoteCommand.SELECT) }
+            onCenter = { press(RemoteCommand.SELECT) },
+            onBack = { press(RemoteCommand.BACK) }, onHome = { press(RemoteCommand.HOME) },
+            onPlayPause = { press(RemoteCommand.PLAY_PAUSE) }, onMute = { press(RemoteCommand.MUTE) },
+            onVolumeUp = { press(RemoteCommand.VOLUME_UP) }, onVolumeDown = { press(RemoteCommand.VOLUME_DOWN) },
+            onChannelUp = { press(RemoteCommand.CHANNEL_UP) }, onChannelDown = { press(RemoteCommand.CHANNEL_DOWN) }
         )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteTextButton(text = "Volver", onClick = { press(RemoteCommand.BACK) })
-            RemoteIconButton(Icons.Filled.Home, "Inicio", onClick = { press(RemoteCommand.HOME) })
-            RemoteIconButton(Icons.Filled.Pause, "Play/Pausa", onClick = { press(RemoteCommand.PLAY_PAUSE) })
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteIconButton(Icons.Filled.VolumeDown, "Bajar volumen", onClick = { press(RemoteCommand.VOLUME_DOWN) })
-            RemoteIconButton(Icons.Filled.VolumeOff, "Silencio", onClick = { press(RemoteCommand.MUTE) })
-            RemoteIconButton(Icons.Filled.VolumeUp, "Subir volumen", onClick = { press(RemoteCommand.VOLUME_UP) })
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteTextButton(text = "CH -", onClick = { press(RemoteCommand.CHANNEL_DOWN) })
-            RemoteTextButton(text = "CH +", onClick = { press(RemoteCommand.CHANNEL_UP) })
-        }
 
         if (showAppShortcuts) {
             JellyfinButton(onClick = { scope.launch { onResult(controller?.openApp(JELLYFIN_PACKAGE) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) } })
@@ -354,8 +383,10 @@ internal fun RemoteIconButton(
     size: Dp = 64.dp,
     repeatable: Boolean = false
 ) {
+    val haptic = LocalHapticFeedback.current
+    val tap = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
     if (!repeatable) {
-        FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(size)) {
+        FilledTonalIconButton(onClick = tap, modifier = Modifier.size(size)) {
             Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(size / 2))
         }
         return
@@ -371,7 +402,7 @@ internal fun RemoteIconButton(
             .size(size)
             .clip(CircleShape)
             .background(containerColor)
-            .repeatingClickable(interactionSource = interactionSource, scope = scope, onClick = onClick),
+            .repeatingClickable(interactionSource = interactionSource, scope = scope, onClick = tap),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -418,23 +449,124 @@ private fun Modifier.repeatingClickable(
 
 @Composable
 internal fun RemoteTextButton(text: String, onClick: () -> Unit) {
-    FilledTonalButton(onClick = onClick, modifier = Modifier.height(64.dp)) {
+    val haptic = LocalHapticFeedback.current
+    FilledTonalButton(
+        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
+        modifier = Modifier.height(64.dp)
+    ) {
         Text(text, style = MaterialTheme.typography.titleMedium)
     }
 }
 
 @Composable
 internal fun BigDPad(onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 72.dp, repeatable = true)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteIconButton(Icons.Filled.KeyboardArrowLeft, "Izquierda", onClick = onLeft, size = 72.dp, repeatable = true)
-            FilledIconButton(onClick = onCenter, modifier = Modifier.size(84.dp)) {
+    val haptic = LocalHapticFeedback.current
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        RemoteIconButton(Icons.Filled.KeyboardArrowUp, "Arriba", onClick = onUp, size = 60.dp, repeatable = true)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RemoteIconButton(Icons.Filled.KeyboardArrowLeft, "Izquierda", onClick = onLeft, size = 60.dp, repeatable = true)
+            FilledIconButton(
+                onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onCenter() },
+                modifier = Modifier.size(68.dp)
+            ) {
                 Text("OK", style = MaterialTheme.typography.titleLarge)
             }
-            RemoteIconButton(Icons.Filled.KeyboardArrowRight, "Derecha", onClick = onRight, size = 72.dp, repeatable = true)
+            RemoteIconButton(Icons.Filled.KeyboardArrowRight, "Derecha", onClick = onRight, size = 60.dp, repeatable = true)
         }
-        RemoteIconButton(Icons.Filled.KeyboardArrowDown, "Abajo", onClick = onDown, size = 72.dp, repeatable = true)
+        RemoteIconButton(Icons.Filled.KeyboardArrowDown, "Abajo", onClick = onDown, size = 60.dp, repeatable = true)
+    }
+}
+
+/** Pastilla vertical estilo control real: "+" arriba, etiqueta al medio y "-" abajo. */
+@Composable
+private fun Rocker(
+    label: String,
+    upIcon: ImageVector,
+    downIcon: ImageVector,
+    upDescription: String,
+    downDescription: String,
+    onUp: () -> Unit,
+    onDown: () -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    Surface(
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.width(56.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(
+                onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onUp() },
+                modifier = Modifier.size(56.dp)
+            ) { Icon(upIcon, contentDescription = upDescription) }
+            Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            IconButton(
+                onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDown() },
+                modifier = Modifier.size(56.dp)
+            ) { Icon(downIcon, contentDescription = downDescription) }
+        }
+    }
+}
+
+/** Cuerpo del control: volumen | cruceta | canal, y debajo Volver / Inicio / Play / Silencio. */
+@Composable
+internal fun RemoteKeypad(
+    onUp: () -> Unit, onDown: () -> Unit, onLeft: () -> Unit, onRight: () -> Unit, onCenter: () -> Unit,
+    onBack: () -> Unit, onHome: () -> Unit, onPlayPause: () -> Unit, onMute: () -> Unit,
+    onVolumeUp: () -> Unit, onVolumeDown: () -> Unit, onChannelUp: () -> Unit, onChannelDown: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Rocker(
+            "VOL", Icons.Filled.VolumeUp, Icons.Filled.VolumeDown,
+            "Subir volumen", "Bajar volumen", onVolumeUp, onVolumeDown
+        )
+        BigDPad(onUp, onDown, onLeft, onRight, onCenter)
+        Rocker(
+            "CH", Icons.Filled.KeyboardArrowUp, Icons.Filled.KeyboardArrowDown,
+            "Canal siguiente", "Canal anterior", onChannelUp, onChannelDown
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        RemoteIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver", onClick = onBack)
+        RemoteIconButton(Icons.Filled.Home, "Inicio", onClick = onHome)
+        RemoteIconButton(Icons.Filled.Pause, "Play/Pausa", onClick = onPlayPause)
+        RemoteIconButton(Icons.Filled.VolumeOff, "Silencio", onClick = onMute)
+    }
+}
+
+/** Estado de la conexión con un equipo de red, para mostrarlo en el control. */
+internal enum class ConnectionState { ONLINE, OFFLINE, NEEDS_PAIRING }
+
+@Composable
+internal fun ConnectionBanner(state: ConnectionState?, hasIrFallback: Boolean, onRepair: (() -> Unit)?) {
+    if (state == null) return
+    val (color, text) = when (state) {
+        ConnectionState.ONLINE -> Color(0xFF2E9E5B) to "Conectado"
+        ConnectionState.OFFLINE -> Color(0xFFD69E2E) to
+            if (hasIrFallback) "Sin respuesta: apagado o fuera de la red. El botón de encendido usará IR."
+            else "Sin respuesta: el equipo está apagado o fuera de la red."
+        ConnectionState.NEEDS_PAIRING -> Color(0xFFE53E3E) to "El equipo ya no reconoce este celular"
+    }
+    if (state == ConnectionState.NEEDS_PAIRING && onRepair != null) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                Text(
+                    "Suele pasar tras actualizar o resetear el TV. Hay que emparejar de nuevo con el código que muestra.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Button(onClick = onRepair) { Text("Volver a emparejar") }
+            }
+        }
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+        Text(text, style = MaterialTheme.typography.labelMedium)
     }
 }
 

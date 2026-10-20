@@ -11,12 +11,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -28,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,7 +41,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import com.rnd.remoto.network.NetworkScanner
+import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import android.appwidget.AppWidgetManager
@@ -100,15 +114,24 @@ fun HomeScreen(
     ) { padding ->
         if (devices.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(
+                        Icons.Default.SettingsRemote,
+                        contentDescription = null,
+                        modifier = Modifier.size(72.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(16.dp))
                     Text(
                         "Todavía no agregaste ningún dispositivo",
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        "Tocá el botón + para agregar tu primer control",
+                        "Agrega tu TV, TV box o equipo infrarrojo para controlarlo desde acá",
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    Spacer(Modifier.height(16.dp))
+                    FilledTonalButton(onClick = onAddDevice) { Text("Agregar dispositivo") }
                 }
             }
         } else {
@@ -142,7 +165,14 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("¿Eliminar \"${device.name}\"?") },
-            text = { Text("Se pierde el emparejamiento y los códigos guardados de este dispositivo.") },
+            text = {
+                Text(
+                    if (device.irCodes.isNotEmpty())
+                        "Se pierde el emparejamiento y los ${device.irCodes.size} código(s) IR guardados de este dispositivo. No se puede deshacer."
+                    else
+                        "Se pierde el emparejamiento de este dispositivo."
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch { repository.deleteDevice(device.id) }
@@ -156,17 +186,62 @@ fun HomeScreen(
 
 @Composable
 private fun DeviceRow(device: RemoteDevice, onOpen: () -> Unit, onDelete: () -> Unit) {
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
+
+    // Estado en línea (solo para equipos de red): se consulta cada 15 s mientras la fila está visible.
+    val online by produceState<Boolean?>(initialValue = null, device.id, device.ip) {
+        val ip = device.ip
+        val port = controlPortFor(device)
+        if (ip == null || port == null) return@produceState
+        val scanner = NetworkScanner(context)
+        while (true) {
+            value = scanner.isReachable(ip, port, 800)
+            delay(15_000)
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         onClick = onOpen
     ) {
         ListItem(
             headlineContent = { Text(device.name) },
-            supportingContent = { Text(typeLabel(device.type)) },
-            leadingContent = { Icon(typeIcon(device.type), contentDescription = null) },
+            supportingContent = {
+                val status = when (online) {
+                    true -> " · En línea"
+                    false -> " · Sin respuesta"
+                    null -> ""
+                }
+                val ip = device.ip?.let { " · $it" } ?: ""
+                Text(typeLabel(device.type) + ip + status)
+            },
+            leadingContent = {
+                Box {
+                    Icon(typeIcon(device.type), contentDescription = null)
+                    online?.let { isOnline ->
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(if (isOnline) Color(0xFF2E9E5B) else Color(0xFFD69E2E))
+                        )
+                    }
+                }
+            },
             trailingContent = {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Eliminar")
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Más opciones")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Eliminar") },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                            onClick = { menuOpen = false; onDelete() }
+                        )
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth()

@@ -106,28 +106,15 @@ internal fun IrRemoteBody(
             onClick = { press("POWER") }
         )
 
-        BigDPad(
+        RemoteKeypad(
             onUp = { press("UP") }, onDown = { press("DOWN") },
             onLeft = { press("LEFT") }, onRight = { press("RIGHT") },
-            onCenter = { press("SELECT") }
+            onCenter = { press("SELECT") },
+            onBack = { press("BACK") }, onHome = { press("HOME") },
+            onPlayPause = { press("PLAY_PAUSE") }, onMute = { press("MUTE") },
+            onVolumeUp = { press("VOLUME_UP") }, onVolumeDown = { press("VOLUME_DOWN") },
+            onChannelUp = { press("CHANNEL_UP") }, onChannelDown = { press("CHANNEL_DOWN") }
         )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteTextButton(text = "Volver", onClick = { press("BACK") })
-            RemoteIconButton(Icons.Filled.Home, "Inicio", onClick = { press("HOME") })
-            RemoteIconButton(Icons.Filled.Pause, "Play/Pausa", onClick = { press("PLAY_PAUSE") })
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteIconButton(Icons.Filled.VolumeDown, "Bajar volumen", onClick = { press("VOLUME_DOWN") })
-            RemoteIconButton(Icons.Filled.VolumeOff, "Silencio", onClick = { press("MUTE") })
-            RemoteIconButton(Icons.Filled.VolumeUp, "Subir volumen", onClick = { press("VOLUME_UP") })
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RemoteTextButton(text = "CH -", onClick = { press("CHANNEL_DOWN") })
-            RemoteTextButton(text = "CH +", onClick = { press("CHANNEL_UP") })
-        }
     }
 
     if (showSearch) {
