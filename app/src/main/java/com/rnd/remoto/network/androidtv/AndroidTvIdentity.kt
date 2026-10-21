@@ -47,22 +47,43 @@ object AndroidTvIdentity {
 
         if (file.exists()) {
             file.inputStream().use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+            // Identidades viejas usaban el mismo CN en todos los equipos y el TV las confundía
+            // (emparejar un segundo equipo desvinculaba al primero): se regeneran una vez.
+            val legacy = (ks.getCertificate(KEY_ALIAS) as X509Certificate)
+                .subjectX500Principal.name.contains("CN=ControlRemoto")
+            if (legacy) {
+                file.delete()
+                ks.load(null)
+                createIdentity(ks, file)
+            }
         } else {
             ks.load(null)
-            val (privateKey, certificate) = generateSelfSignedIdentity()
-            ks.setKeyEntry(KEY_ALIAS, privateKey, KEYSTORE_PASSWORD.toCharArray(), arrayOf(certificate))
-            file.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+            createIdentity(ks, file)
         }
 
         cachedPrivateKey = ks.getKey(KEY_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as PrivateKey
         cachedCertificate = ks.getCertificate(KEY_ALIAS) as X509Certificate
     }
 
+    private fun createIdentity(ks: KeyStore, file: File) {
+        val (privateKey, certificate) = generateSelfSignedIdentity()
+        ks.setKeyEntry(KEY_ALIAS, privateKey, KEYSTORE_PASSWORD.toCharArray(), arrayOf(certificate))
+        file.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+    }
+
+    /** Nombre único de esta instalación (modelo + sufijo del certificado) para el emparejamiento. */
+    fun clientName(): String {
+        val cn = Regex("CN=([^,]+)").find(clientCertificate().subjectX500Principal.name)?.groupValues?.get(1)
+        return cn ?: "Control Remoto"
+    }
+
     private fun generateSelfSignedIdentity(): Pair<PrivateKey, X509Certificate> {
         val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
 
         val now = System.currentTimeMillis()
-        val subject = X500Name("CN=ControlRemoto")
+        val suffix = "%04x".format((0..0xFFFF).random())
+        val model = android.os.Build.MODEL.replace(Regex("[^A-Za-z0-9 ]"), "").trim().ifEmpty { "Android" }
+        val subject = X500Name("CN=Control Remoto $model $suffix")
         val certBuilder = JcaX509v3CertificateBuilder(
             subject,
             BigInteger.valueOf(now),

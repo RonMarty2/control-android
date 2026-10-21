@@ -95,6 +95,7 @@ import com.rnd.remoto.network.RemoteCommand
 import com.rnd.remoto.network.WolClient
 import com.rnd.remoto.network.RemoteController
 import com.rnd.remoto.network.RemoteControllerFactory
+import com.rnd.remoto.network.androidtv.AndroidTvIdentity
 import com.rnd.remoto.network.androidtv.AndroidTvPairingClient
 import com.rnd.remoto.network.VizioPairingClient
 import com.rnd.remoto.premium.PremiumRepository
@@ -658,7 +659,7 @@ private fun AndroidTvPairingBody(
                 scope.launch {
                     isBusy = true
                     val client = AndroidTvPairingClient(ip)
-                    val result = client.connectAndRequestPin("Control Remoto")
+                    val result = client.connectAndRequestPin(AndroidTvIdentity.clientName())
                     isBusy = false
                     result.onSuccess {
                         pairingClient = client
