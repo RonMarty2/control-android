@@ -20,8 +20,12 @@ class AndroidTvPairingClient(private val ip: String, private val port: Int = 646
     suspend fun connectAndRequestPin(clientName: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory.createSocket(ip, port) as SSLSocket
-            sslSocket.enabledProtocols = sslSocket.supportedProtocols
+            // Android 5.x lista TLS_FALLBACK_SCSV como cipher soportado; habilitarlo hace que el TV
+            // aborte con "inappropriate fallback". Se filtra y se usa solo TLS 1.2 si está disponible.
+            sslSocket.enabledProtocols = sslSocket.supportedProtocols.filter { it == "TLSv1.2" }
+                .ifEmpty { sslSocket.supportedProtocols.toList() }.toTypedArray()
             sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
+                .filter { !it.contains("SCSV") }.toTypedArray()
             sslSocket.startHandshake()
             socket = sslSocket
 

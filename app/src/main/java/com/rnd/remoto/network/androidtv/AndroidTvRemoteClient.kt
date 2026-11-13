@@ -76,8 +76,11 @@ class AndroidTvRemoteClient(
             rawSocket.connect(InetSocketAddress(targetIp, port), CONNECT_TIMEOUT_MS)
             val sslSocket = AndroidTvIdentity.buildSslContext().socketFactory
                 .createSocket(rawSocket, targetIp, port, true) as SSLSocket
-            sslSocket.enabledProtocols = sslSocket.supportedProtocols
+            // Ver AndroidTvPairingClient: en Android 5.x TLS_FALLBACK_SCSV rompe el handshake.
+            sslSocket.enabledProtocols = sslSocket.supportedProtocols.filter { it == "TLSv1.2" }
+                .ifEmpty { sslSocket.supportedProtocols.toList() }.toTypedArray()
             sslSocket.enabledCipherSuites = sslSocket.supportedCipherSuites
+                .filter { !it.contains("SCSV") }.toTypedArray()
             sslSocket.soTimeout = CONNECT_TIMEOUT_MS
             sslSocket.startHandshake()
             sslSocket.soTimeout = 0

@@ -2,7 +2,10 @@ package com.rnd.remoto.ui.screens
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.platform.LocalConfiguration
@@ -578,17 +581,28 @@ internal fun RemoteKeypad(
     }
 }
 
+private fun isVpnActive(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    val network = cm.activeNetwork ?: return false
+    return cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+}
+
 /** Estado de la conexión con un equipo de red, para mostrarlo en el control. */
 internal enum class ConnectionState { ONLINE, OFFLINE, NEEDS_PAIRING }
 
 @Composable
 internal fun ConnectionBanner(state: ConnectionState?, hasIrFallback: Boolean, onRepair: (() -> Unit)?) {
     if (state == null) return
+    val context = LocalContext.current
+    // Una VPN encendida manda también el tráfico local por internet y el TV deja de ser alcanzable.
+    val vpn = remember(state) { isVpnActive(context) }
     val (color, text) = when (state) {
         ConnectionState.ONLINE -> Color(0xFF2E9E5B) to "Conectado"
-        ConnectionState.OFFLINE -> Color(0xFFD69E2E) to
-            if (hasIrFallback) "Sin respuesta: apagado o fuera de la red. El botón de encendido usará IR."
-            else "Sin respuesta: el equipo está apagado o fuera de la red."
+        ConnectionState.OFFLINE -> Color(0xFFD69E2E) to when {
+            vpn -> "Sin respuesta: tenés una VPN encendida. Apagala para llegar al equipo."
+            hasIrFallback -> "Sin respuesta: apagado o fuera de la red. El botón de encendido usará IR."
+            else -> "Sin respuesta: el equipo está apagado o fuera de la red."
+        }
         ConnectionState.NEEDS_PAIRING -> Color(0xFFE53E3E) to "El equipo ya no reconoce este celular"
     }
     if (state == ConnectionState.NEEDS_PAIRING && onRepair != null) {
