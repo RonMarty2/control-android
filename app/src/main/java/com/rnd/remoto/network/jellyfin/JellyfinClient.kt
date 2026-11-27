@@ -82,8 +82,11 @@ data class JellyfinSessionInfo(
     val deviceName: String,
     val userName: String?,
     val supportsRemoteControl: Boolean,
+    val nowPlayingItemId: String? = null,
     val nowPlayingItemName: String? = null,
-    val isPaused: Boolean = false
+    val isPaused: Boolean = false,
+    val positionTicks: Long = 0L,
+    val isActive: Boolean = false
 )
 
 /**
@@ -225,6 +228,14 @@ class JellyfinClient(
         }
     }
 
+    /** Obtiene los datos actualizados de un item (incluyendo su PlaybackPositionTicks real). */
+    suspend fun getItem(itemId: String): Result<JellyfinMediaItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val obj = getJson("/Users/$userId/Items/$itemId")
+            parseItem(obj)
+        }
+    }
+
     /**
      * Si el usuario toca "Reproducir ya" sobre una Serie entera, busca el próximo capítulo sin terminar
      * (o el primero de la serie) para reproducirlo directamente.
@@ -257,8 +268,13 @@ class JellyfinClient(
                 val deviceId = obj.optString("DeviceId")
                 if (deviceId == "control-remoto-android") continue
                 val supportsRemote = obj.optBoolean("SupportsRemoteControl", false)
-                val nowPlaying = obj.optJSONObject("NowPlayingItem")?.optString("Name")
-                val isPaused = obj.optJSONObject("PlayState")?.optBoolean("IsPaused", false) ?: false
+                val nowPlayingObj = obj.optJSONObject("NowPlayingItem")
+                val nowPlayingId = nowPlayingObj?.optString("Id")?.takeIf { it.isNotBlank() }
+                val nowPlaying = nowPlayingObj?.optString("Name")?.takeIf { it.isNotBlank() }
+                val playState = obj.optJSONObject("PlayState")
+                val isPaused = playState?.optBoolean("IsPaused", false) ?: false
+                val positionTicks = playState?.optLong("PositionTicks", 0L) ?: 0L
+                val isActive = obj.optBoolean("IsActive", false)
                 val userName = obj.optString("UserName").takeIf { it.isNotBlank() }
                 // Consideramos sesiones de TV o que soporten control remoto
                 if (supportsRemote || client.contains("TV", ignoreCase = true) || client.contains("Android", ignoreCase = true)) {
@@ -269,16 +285,21 @@ class JellyfinClient(
                             deviceName = deviceName,
                             userName = userName,
                             supportsRemoteControl = supportsRemote,
+                            nowPlayingItemId = nowPlayingId,
                             nowPlayingItemName = nowPlaying,
-                            isPaused = isPaused
+                            isPaused = isPaused,
+                            positionTicks = positionTicks,
+                            isActive = isActive
                         )
                     )
                 }
             }
-            // Priorizar Android TV / TV Box primero
+            // Priorizar Android TV / TV Box activo primero
             list.sortedByDescending {
                 val score = (if (it.client.contains("Android TV", ignoreCase = true)) 4 else 0) +
                     (if (it.supportsRemoteControl) 2 else 0) +
+                    (if (it.isActive) 2 else 0) +
+                    (if (it.nowPlayingItemId != null) 1 else 0) +
                     (if (it.userName != null) 1 else 0)
                 score
             }
@@ -286,38 +307,58 @@ class JellyfinClient(
     }
 
     /**
-     * Ordena reproducir [item] en el TV Box estando en cualquier pantalla o app del TV Box (ej. YouTube, Netflix o inicio):
-     * 1. Siempre asegura que la app de Jellyfin se ponga en primer plano en el TV Box llamando a [wakeTvApp].
-     * 2. Espera a que la sesión de Jellyfin del TV Box esté conectada y activa en el servidor.
-     * 3. Envía la orden PlayNow (y si el TV Box estaba despertando desde otra app, reintenta tras 1.5s para garantizar que arranque).
+     * Ordena reproducir [item] en el TV Box estando en cualquier pantalla o app del TV Box (ej. YouTube, Netflix, inicio o ya dentro de Jellyfin):
+     * 1. Refresca la posición real guardada del item en el servidor.
+     * 2. Solo abre/trae Jellyfin al frente cuando sabemos que otra app está en primer plano o no hay sesión activa
+     *    (evita pasar por Play Store y reabrir Jellyfin cuando ya estás dentro de Jellyfin).
+     * 3. Envía PlayNow con startPositionTicks explícito (0 para iniciar desde el principio, o la posición guardada para continuar).
+     * 4. Verifica que haya arrancado el item pedido y en la posición correcta; si hace falta, despierta Jellyfin o corrige con Seek.
      */
     suspend fun playOnTvBox(
         item: JellyfinMediaItem,
         preferredDeviceName: String? = null,
         resumeFromSavedPosition: Boolean = true,
-        isJellyfinInForeground: Boolean = false,
+        foregroundAppPackage: String? = null,
         wakeTvApp: (suspend () -> Unit)? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val playable = if (item.type == "Series") {
+            val basePlayable = if (item.type == "Series") {
                 resolvePlayableItemForSeries(item.id).getOrThrow()
             } else {
                 item
             }
 
-            // Si estás en YouTube o cualquier otro lugar del TV Box, SIEMPRE traemos Jellyfin al frente primero
-            if (!isJellyfinInForeground && wakeTvApp != null) {
-                Log.d(TAG, "Trayendo Jellyfin al frente en el TV Box...")
+            val playable = getItem(basePlayable.id).getOrDefault(basePlayable)
+            val targetTicks = if (resumeFromSavedPosition && playable.playbackPositionTicks > 0L) {
+                playable.playbackPositionTicks
+            } else {
+                0L
+            }
+
+            val isJellyfinKnownForeground = foregroundAppPackage?.startsWith("org.jellyfin", ignoreCase = true) == true
+            val isOtherAppKnownForeground = !foregroundAppPackage.isNullOrBlank() && !isJellyfinKnownForeground
+
+            var wokenUp = false
+
+            // Solo traemos Jellyfin al frente antes de enviar PlayNow si SABEMOS que hay otra app en primer plano
+            if (isOtherAppKnownForeground && wakeTvApp != null) {
+                Log.d(TAG, "Otra app en primer plano ($foregroundAppPackage); trayendo Jellyfin al frente...")
                 wakeTvApp.invoke()
+                wokenUp = true
                 delay(1500)
             }
 
             var targetSession = findBestTvSession(preferredDeviceName)
+            if (targetSession == null && wakeTvApp != null && !wokenUp) {
+                Log.d(TAG, "No hay sesión activa de Jellyfin; abriendo Jellyfin en el TV Box...")
+                wakeTvApp.invoke()
+                wokenUp = true
+                delay(1500)
+                targetSession = findBestTvSession(preferredDeviceName)
+            }
+
             if (targetSession == null) {
-                if (isJellyfinInForeground && wakeTvApp != null) {
-                    wakeTvApp.invoke()
-                }
-                // Esperamos hasta 10 segundos a que la app de Jellyfin en el TV Box se reporte al servidor
+                // Esperamos hasta ~10 segundos a que la app de Jellyfin en el TV Box se reporte al servidor
                 for (attempt in 1..15) {
                     delay(650)
                     targetSession = findBestTvSession(preferredDeviceName)
@@ -328,25 +369,86 @@ class JellyfinClient(
             val session = targetSession
                 ?: error("No se detectó Jellyfin activo en el TV Box. Revisá que la app Jellyfin esté instalada en el TV.")
 
-            val startTicks = if (resumeFromSavedPosition && playable.playbackPositionTicks > 0L) {
-                "&startPositionTicks=${playable.playbackPositionTicks}"
-            } else ""
-
-            val playPath = "/Sessions/${session.id}/Playing?playCommand=PlayNow&itemIds=${playable.id}$startTicks"
-            postCommand(playPath)
-
-            // Si Jellyfin recién se estaba abriendo encima de YouTube/otra app, puede ignorar el primer comando
-            // mientras carga su pantalla principal: verificamos si arrancó a reproducir y, si no, lo reenviamos.
-            if (!isJellyfinInForeground) {
-                delay(1800)
-                val refreshed = findBestTvSession(preferredDeviceName)
-                if (refreshed != null && refreshed.nowPlayingItemName.isNullOrBlank()) {
-                    runCatching { postCommand("/Sessions/${refreshed.id}/Playing?playCommand=PlayNow&itemIds=${playable.id}$startTicks") }
+            // Si este mismo título ya se está reproduciendo en Jellyfin, basta con Seek directo (+ Unpause si estaba pausado)
+            if (!wokenUp && session.nowPlayingItemId == playable.id && (isJellyfinKnownForeground || !session.isPaused)) {
+                sendSeek(session.id, targetTicks)
+                if (session.isPaused) {
+                    runCatching { postCommand("/Sessions/${session.id}/Playing/Unpause") }
+                }
+                return@runCatching if (targetTicks == 0L) {
+                    "Reiniciando \"${playable.displayTitle}\" desde el principio en ${session.deviceName}"
+                } else {
+                    "Continuando \"${playable.displayTitle}\" en ${session.deviceName}"
                 }
             }
 
-            "Reproduciendo \"${playable.displayTitle}\" en ${session.deviceName}"
+            val playQuery = "playCommand=PlayNow&itemIds=${playable.id}&startPositionTicks=$targetTicks"
+            postCommand("/Sessions/${session.id}/Playing?$playQuery")
+
+            // Verificamos si arrancó a reproducir el item pedido
+            var startedSession = waitForPlaybackStart(preferredDeviceName, playable.id, maxWaitMs = 2200L)
+
+            if (startedSession == null) {
+                if (!wokenUp && !isJellyfinKnownForeground && wakeTvApp != null) {
+                    // foregroundApp era null y Jellyfin probablemente estaba en segundo plano
+                    Log.d(TAG, "PlayNow no arrancó; trayendo Jellyfin al frente y reintentando...")
+                    wakeTvApp.invoke()
+                    wokenUp = true
+                    delay(1800)
+                } else {
+                    delay(800)
+                }
+                val refreshed = findBestTvSession(preferredDeviceName) ?: session
+                runCatching { postCommand("/Sessions/${refreshed.id}/Playing?$playQuery") }
+                startedSession = waitForPlaybackStart(preferredDeviceName, playable.id, maxWaitMs = 2500L)
+            }
+
+            // Garantizar que la posición real coincida con "desde el principio" (0) o "continuar" (targetTicks)
+            if (startedSession != null) {
+                val checked = if (targetTicks > 0L && startedSession.positionTicks == 0L) {
+                    delay(700)
+                    findBestTvSession(preferredDeviceName)?.takeIf { it.nowPlayingItemId == playable.id } ?: startedSession
+                } else {
+                    startedSession
+                }
+                val currentPos = checked.positionTicks
+                val needsSeek = if (targetTicks == 0L) {
+                    currentPos > 80_000_000L // > 8s cuando se pidió iniciar desde 0
+                } else {
+                    kotlin.math.abs(currentPos - targetTicks) > 120_000_000L // desfase > 12s
+                }
+                if (needsSeek) {
+                    Log.d(TAG, "Ajustando posición con Seek: actual=$currentPos, objetivo=$targetTicks")
+                    runCatching { sendSeek(checked.id, targetTicks) }
+                }
+            }
+
+            if (targetTicks == 0L) {
+                "Iniciando \"${playable.displayTitle}\" desde el principio en ${session.deviceName}"
+            } else {
+                "Continuando \"${playable.displayTitle}\" en ${session.deviceName}"
+            }
         }
+    }
+
+    private fun sendSeek(sessionId: String, positionTicks: Long) {
+        postCommand("/Sessions/$sessionId/Playing/Seek?seekPositionTicks=${positionTicks.coerceAtLeast(0L)}")
+    }
+
+    private suspend fun waitForPlaybackStart(
+        preferredDeviceName: String?,
+        expectedItemId: String,
+        maxWaitMs: Long
+    ): JellyfinSessionInfo? {
+        val deadline = System.currentTimeMillis() + maxWaitMs
+        while (System.currentTimeMillis() < deadline) {
+            delay(550)
+            val s = findBestTvSession(preferredDeviceName)
+            if (s != null && s.nowPlayingItemId == expectedItemId) {
+                return s
+            }
+        }
+        return null
     }
 
     /** Envía Playpause, Stop, NextTrack, etc. a la sesión activa de Jellyfin en el TV Box. */
@@ -374,31 +476,33 @@ class JellyfinClient(
     fun posterUrl(itemId: String, maxWidth: Int = 260): String =
         "$normalizedUrl/Items/$itemId/Images/Primary?maxWidth=$maxWidth&quality=75"
 
+    private fun parseItem(obj: JSONObject): JellyfinMediaItem {
+        val userData = obj.optJSONObject("UserData")
+        val imageTags = obj.optJSONObject("ImageTags")
+        val hasPrimary = (imageTags != null && imageTags.has("Primary")) || obj.has("SeriesPrimaryImageTag")
+        return JellyfinMediaItem(
+            id = obj.optString("Id"),
+            name = obj.optString("Name", "Sin título"),
+            type = obj.optString("Type", "Movie"),
+            seriesName = obj.optString("SeriesName").takeIf { it.isNotBlank() },
+            seriesId = obj.optString("SeriesId").takeIf { it.isNotBlank() },
+            seasonNumber = obj.optInt("ParentIndexNumber", -1).takeIf { it >= 0 },
+            episodeNumber = obj.optInt("IndexNumber", -1).takeIf { it >= 0 },
+            productionYear = obj.optInt("ProductionYear", -1).takeIf { it > 0 },
+            overview = obj.optString("Overview").takeIf { it.isNotBlank() },
+            runTimeTicks = obj.optLong("RunTimeTicks", 0L),
+            playbackPositionTicks = userData?.optLong("PlaybackPositionTicks", 0L) ?: 0L,
+            playedPercentage = userData?.optDouble("PlayedPercentage", 0.0) ?: 0.0,
+            hasPrimaryImage = hasPrimary
+        )
+    }
+
     private fun parseItemsArray(arr: JSONArray?): List<JellyfinMediaItem> {
         if (arr == null) return emptyList()
         val result = mutableListOf<JellyfinMediaItem>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            val userData = obj.optJSONObject("UserData")
-            val imageTags = obj.optJSONObject("ImageTags")
-            val hasPrimary = (imageTags != null && imageTags.has("Primary")) || obj.has("SeriesPrimaryImageTag")
-            result.add(
-                JellyfinMediaItem(
-                    id = obj.optString("Id"),
-                    name = obj.optString("Name", "Sin título"),
-                    type = obj.optString("Type", "Movie"),
-                    seriesName = obj.optString("SeriesName").takeIf { it.isNotBlank() },
-                    seriesId = obj.optString("SeriesId").takeIf { it.isNotBlank() },
-                    seasonNumber = obj.optInt("ParentIndexNumber", -1).takeIf { it >= 0 },
-                    episodeNumber = obj.optInt("IndexNumber", -1).takeIf { it >= 0 },
-                    productionYear = obj.optInt("ProductionYear", -1).takeIf { it > 0 },
-                    overview = obj.optString("Overview").takeIf { it.isNotBlank() },
-                    runTimeTicks = obj.optLong("RunTimeTicks", 0L),
-                    playbackPositionTicks = userData?.optLong("PlaybackPositionTicks", 0L) ?: 0L,
-                    playedPercentage = userData?.optDouble("PlayedPercentage", 0.0) ?: 0.0,
-                    hasPrimaryImage = hasPrimary
-                )
-            )
+            result.add(parseItem(obj))
         }
         return result
     }

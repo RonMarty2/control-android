@@ -402,16 +402,19 @@ private fun JellyfinBrowserView(
         scope.launch {
             isSendingPlay = true
             val fgApp = controller?.currentForegroundApp?.value
-            val isJellyfinFront = fgApp == JELLYFIN_PACKAGE
+            val isOtherAppKnown = !fgApp.isNullOrBlank() && !fgApp.startsWith("org.jellyfin", ignoreCase = true)
             onMessage(
-                if (isJellyfinFront) "Reproduciendo \"${item.displayTitle}\" en TV Box..."
-                else "Abriendo Jellyfin y reproduciendo \"${item.displayTitle}\"..."
+                when {
+                    isOtherAppKnown -> "Abriendo Jellyfin y reproduciendo \"${item.displayTitle}\"..."
+                    resume -> "Continuando \"${item.displayTitle}\" en TV Box..."
+                    else -> "Iniciando \"${item.displayTitle}\" desde el principio..."
+                }
             )
             val result = client.playOnTvBox(
                 item = item,
                 preferredDeviceName = device.name,
                 resumeFromSavedPosition = resume,
-                isJellyfinInForeground = isJellyfinFront,
+                foregroundAppPackage = fgApp,
                 wakeTvApp = {
                     controller?.openApp(JELLYFIN_PACKAGE)
                 }
@@ -421,6 +424,7 @@ private fun JellyfinBrowserView(
                 onMessage(msg)
                 delay(1500)
                 activeSessions = client.getControllableSessions().getOrDefault(emptyList())
+                resumeItems = client.getResumeItems().getOrDefault(resumeItems)
             }.onFailure { err ->
                 onMessage(err.message ?: "No se pudo reproducir en el TV Box")
             }
@@ -430,15 +434,23 @@ private fun JellyfinBrowserView(
     /**
      * Lógica inteligente al tocar un título:
      * - Si es Serie: abre el selector de temporadas/capítulos (donde puede Continuar o elegir desde S01E01).
-     * - Si es Película o Capítulo y YA tiene progreso guardado (playbackPositionTicks > 0):
+     * - Si es Película o Capítulo: consulta la posición actual en el servidor y, si tiene progreso guardado,
      *   pregunta si quiere "Continuar desde donde lo dejó" o "Iniciar desde el principio".
      * - Si no tiene progreso (0% visto): lo reproduce directamente desde el inicio sin preguntar.
      */
     fun onSelectPlayableItem(item: JellyfinMediaItem) {
-        when {
-            item.type == "Series" -> selectedSeriesForEpisodes = item
-            item.playbackPositionTicks > 0L -> selectedItemForResumePrompt = item
-            else -> playItemOnTv(item, resume = false)
+        if (item.type == "Series") {
+            selectedSeriesForEpisodes = item
+            return
+        }
+        if (isSendingPlay) return
+        scope.launch {
+            val fresh = client.getItem(item.id).getOrDefault(item)
+            if (fresh.playbackPositionTicks > 0L) {
+                selectedItemForResumePrompt = fresh
+            } else {
+                playItemOnTv(fresh, resume = false)
+            }
         }
     }
 
@@ -838,10 +850,7 @@ private fun MediaGridSection(
                         item = item,
                         client = client,
                         onClick = { onTapItem(item) },
-                        onQuickPlay = {
-                            if (item.type == "Series") onQuickPlaySeries(item)
-                            else onTapItem(item)
-                        }
+                        onQuickPlay = { onQuickPlaySeries(item) }
                     )
                 }
             }
@@ -894,10 +903,7 @@ private fun MediaHorizontalRow(
                 item = item,
                 client = client,
                 onClick = { onTapItem(item) },
-                onQuickPlay = {
-                    if (item.type == "Series") onQuickPlaySeries(item)
-                    else onTapItem(item)
-                }
+                onQuickPlay = { onQuickPlaySeries(item) }
             )
         }
     }
