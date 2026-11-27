@@ -37,6 +37,18 @@ private const val KEYCODE_ENTER = 66
 private const val KEYCODE_DEL = 67
 private const val KEYCODE_DPAD_CENTER = 23
 
+/** Deep links directos que Android TV abre al instante sin pasar por Play Store. */
+private val DIRECT_APP_DEEP_LINKS = mapOf(
+    "com.netflix.ninja" to "https://www.netflix.com/title",
+    "com.google.android.youtube.tv" to "https://www.youtube.com",
+    "com.google.android.youtube.tvkids" to "https://www.youtubekids.com",
+    "com.disney.disneyplus" to "https://www.disneyplus.com",
+    "com.amazon.amazonvideo.livingroom" to "https://app.primevideo.com",
+    "com.wbd.stream" to "https://play.max.com",
+    "com.spotify.tv.android" to "spotify://",
+    "tv.twitch.android.app" to "twitch://open"
+)
+
 /**
  * Android TV Remote v2 control connection (port 6466). Must already be paired via
  * [AndroidTvPairingClient] - this class presents the same client certificate the TV
@@ -242,15 +254,28 @@ class AndroidTvRemoteClient(
 
     /** Paquete de la app que el TV tiene en primer plano (lo avisa solo cada vez que cambia). */
     private val foregroundApp = MutableStateFlow<String?>(null)
+    override val currentForegroundApp = foregroundApp
 
     /**
-     * Android TV no entiende un nombre de paquete como enlace, y "market://launch" lo rechaza.
-     * Lo que sí funciona: abrir la ficha de la app en Play Store (market://details) y apretar OK,
-     * que cae en el botón "Abrir" cuando la app está instalada.
+     * Abre una app en el Android TV:
+     * - Si tenemos un Deep Link directo para esa app (ej: Netflix, YouTube, Disney+, Prime Video),
+     *   lo envía directamente para que abra al instante sin pasar por Play Store.
+     * - Para las demás apps (ej: Jellyfin, MagisTV, Kodi), abre la ficha de la app en Play Store
+     *   (market://details) y aprieta OK sobre el botón "Abrir".
      */
     override suspend fun openApp(packageName: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             if (foregroundApp.value == packageName) return@runCatching
+            val directDeepLink = DIRECT_APP_DEEP_LINKS[packageName]
+            if (directDeepLink != null) {
+                sendWithReconnect(RemoteMessages.appLinkLaunchRequest(directDeepLink))
+                // Verificamos si abrió rápido; si el TV no reporta el cambio pero aceptó el link, igual funciona.
+                // Si el TV abrió el navegador o Play Store por no reconocer el esquema, caemos al método de Play Store.
+                val quickOpen = withTimeoutOrNull(2200) {
+                    foregroundApp.first { it == packageName || it == "com.android.vending" }
+                }
+                if (quickOpen == packageName || quickOpen == null) return@runCatching
+            }
             sendWithReconnect(RemoteMessages.appLinkLaunchRequest("market://details?id=$packageName"))
             // Esperar a que aparezca la tienda (o que la app ya se haya abierto sola).
             val storeOrApp = withTimeoutOrNull(6000) {

@@ -241,6 +241,26 @@ private fun NetworkRemoteBody(
     var showIrPowerDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var connection by remember(device.id) { mutableStateOf<ConnectionState?>(null) }
+    var selectedTab by remember(device.id) { mutableStateOf(0) } // 0 = Control, 1 = Jellyfin
+    val activePackage by (controller?.currentForegroundApp ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
+
+    // Auto-sincronización pasiva: cada vez que el TV Box avisa qué app tiene en primer plano,
+    // la guardamos en discoveredApps (y si no es una app del sistema, queda disponible para usar).
+    LaunchedEffect(activePackage, device.id) {
+        val pkg = activePackage ?: return@LaunchedEffect
+        if (pkg.isNotBlank() && pkg !in IGNORED_SYSTEM_PACKAGES && pkg !in device.discoveredApps) {
+            repository.updateDevice(device.id) { current ->
+                val updatedDiscovered = (current.discoveredApps + pkg).distinct()
+                val updatedFavorites = if (pkg !in current.favoriteApps) {
+                    (current.favoriteApps + pkg).distinct()
+                } else current.favoriteApps
+                current.copy(
+                    discoveredApps = updatedDiscovered,
+                    favoriteApps = updatedFavorites
+                )
+            }
+        }
+    }
 
     // Mantener la conexión abierta mientras se ve el control: así el TV puede avisar cuando se
     // enfoca un cuadro de texto o se toca el micrófono, aunque todavía no se haya tocado ningún botón.
@@ -282,8 +302,11 @@ private fun NetworkRemoteBody(
     fun press(command: RemoteCommand) {
         scope.launch { onResult(controller?.send(command) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
     }
-    fun launchApp(appLink: String) {
-        scope.launch { onResult(controller?.launchApp(appLink) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
+    fun openTvApp(packageName: String) {
+        scope.launch { onResult(controller?.openApp(packageName) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) }
+    }
+    fun notifyMessage(msg: String) {
+        onResult(Result.failure(IllegalStateException(msg)))
     }
     var lastPowerAt by remember { mutableStateOf(0L) }
     fun pressPower() {
@@ -328,26 +351,90 @@ private fun NetworkRemoteBody(
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    // Botón superior para cambiar rápido entre [Teclas del Control] y [Catálogo de Jellyfin] (Opción 1B)
+    if (showAppShortcuts) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val tabModifier = Modifier.weight(1f)
+            if (selectedTab == 0) {
+                Button(onClick = { selectedTab = 0 }, modifier = tabModifier) {
+                    Text("Teclas del Control")
+                }
+            } else {
+                TextButton(onClick = { selectedTab = 0 }, modifier = tabModifier) {
+                    Text("Teclas del Control")
+                }
+            }
+            if (selectedTab == 1) {
+                Button(onClick = { selectedTab = 1 }, modifier = tabModifier) {
+                    JellyfinLogo(Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Jellyfin")
+                }
+            } else {
+                TextButton(onClick = { selectedTab = 1 }, modifier = tabModifier) {
+                    Text("Catálogo Jellyfin")
+                }
+            }
+        }
+    }
+
+    if (showAppShortcuts && selectedTab == 1) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ConnectionBanner(
+                state = connection,
+                hasIrFallback = !device.irCodes["POWER"].isNullOrBlank(),
+                onRepair = onRepair
+            )
+            // Controles rápidos de volumen/pausa siempre a mano arriba del catálogo de Jellyfin
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RemoteIconButton(Icons.Filled.VolumeDown, "Bajar volumen", onClick = { press(RemoteCommand.VOLUME_DOWN) }, size = 48.dp, repeatable = true)
+                RemoteIconButton(Icons.Filled.VolumeUp, "Subir volumen", onClick = { press(RemoteCommand.VOLUME_UP) }, size = 48.dp, repeatable = true)
+                RemoteIconButton(Icons.Filled.Pause, "Play/Pausa", onClick = { press(RemoteCommand.PLAY_PAUSE) }, size = 48.dp)
+                RemoteIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Volver en TV", onClick = { press(RemoteCommand.BACK) }, size = 48.dp)
+                RemoteIconButton(Icons.Filled.Home, "Inicio TV", onClick = { press(RemoteCommand.HOME) }, size = 48.dp)
+            }
+            JellyfinTabContent(
+                device = device,
+                repository = repository,
+                controller = controller,
+                onMessage = ::notifyMessage
+            )
+        }
+        return
+    }
+
     val top: @Composable ColumnScope.() -> Unit = {
-        ConnectionBanner(
-            state = connection,
-            hasIrFallback = !device.irCodes["POWER"].isNullOrBlank(),
-            onRepair = onRepair
-        )
-
-        if (showAppShortcuts) TvTextBar(controller = controller, onResult = onResult)
-
-        RemoteIconButton(
-            icon = Icons.Filled.PowerSettingsNew,
-            contentDescription = "Encender/Apagar",
-            size = 76.dp,
-            onClick = { pressPower() }
-        )
-
-        if (irController.hasIrEmitter() || !device.irCodes["POWER"].isNullOrBlank()) TextButton(onClick = { showIrPowerDialog = true }) {
-            Text(
-                if (device.irCodes["POWER"].isNullOrBlank()) "¿No prende por Wi-Fi? Configurar encendido por IR"
-                else "Encendido por IR configurado (editar)"
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ConnectionBanner(
+                state = connection,
+                hasIrFallback = !device.irCodes["POWER"].isNullOrBlank(),
+                onRepair = onRepair
+            )
+            RemoteIconButton(
+                icon = Icons.Filled.PowerSettingsNew,
+                contentDescription = "Encender/Apagar",
+                size = 56.dp,
+                onClick = { pressPower() }
             )
         }
     }
@@ -366,7 +453,25 @@ private fun NetworkRemoteBody(
 
     val bottom: @Composable ColumnScope.() -> Unit = {
         if (showAppShortcuts) {
-            JellyfinButton(onClick = { scope.launch { onResult(controller?.openApp(JELLYFIN_PACKAGE) ?: Result.failure(IllegalStateException("Dispositivo no configurado"))) } })
+            TvAppsShortcutBar(
+                favoritePackages = device.favoriteApps,
+                discoveredPackages = device.discoveredApps,
+                activePackage = activePackage,
+                onOpenApp = ::openTvApp,
+                onUpdateFavorites = { updated ->
+                    scope.launch {
+                        repository.updateDevice(device.id) { it.copy(favoriteApps = updated) }
+                    }
+                }
+            )
+            TvTextBar(controller = controller, onResult = onResult)
+        }
+
+        if (irController.hasIrEmitter() || !device.irCodes["POWER"].isNullOrBlank()) TextButton(onClick = { showIrPowerDialog = true }) {
+            Text(
+                if (device.irCodes["POWER"].isNullOrBlank()) "¿No prende por Wi-Fi? Configurar encendido por IR"
+                else "Encendido por IR configurado (editar)"
+            )
         }
 
         if (onRepair != null) {
@@ -582,9 +687,18 @@ internal fun RemoteKeypad(
 }
 
 private fun isVpnActive(context: Context): Boolean {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-    val network = cm.activeNetwork ?: return false
-    return cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    return runCatching {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val network = cm.activeNetwork ?: return false
+            cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        } else {
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { net ->
+                cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        }
+    }.getOrDefault(false)
 }
 
 /** Estado de la conexión con un equipo de red, para mostrarlo en el control. */

@@ -54,5 +54,17 @@ data class RemoteDevice(
     val sonyPsk: String? = null,
     val vizioDeviceId: String? = null,
     val vizioAuthToken: String? = null,
-    val irCodes: Map<String, String> = emptyMap()
+    val irCodes: Map<String, String> = emptyMap(),
+    val favoriteApps: List<String> = listOf(
+        "com.netflix.ninja",
+        "com.google.android.youtube.tv",
+        "org.jellyfin.androidtv",
+        "com.disney.disneyplus"
+    ),
+    val discoveredApps: List<String> = emptyList(),
+    val jellyfinUrl: String? = null,
+    val jellyfinUserId: String? = null,
+    val jellyfinAccessToken: String? = null,
+    val jellyfinUsername: String? = null,
+    val jellyfinServerName: String? = null
 )

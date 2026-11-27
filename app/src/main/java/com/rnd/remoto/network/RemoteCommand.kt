@@ -1,6 +1,8 @@
 package com.rnd.remoto.network
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 
 /** Cosas que el dispositivo le avisa a la app sin que ella pregunte. */
@@ -41,9 +43,11 @@ interface RemoteController {
     suspend fun sendText(text: String, submit: Boolean = false): Result<Unit> =
         Result.failure(UnsupportedOperationException("Este dispositivo no soporta escribir texto"))
 
-
     /** Eventos que el dispositivo manda por su cuenta (ej: se enfocó un cuadro de texto). */
     val imeEvents: Flow<ImeEvent> get() = emptyFlow()
+
+    /** Paquete de la app que el TV tiene actualmente en primer plano (si lo reporta). */
+    val currentForegroundApp: StateFlow<String?> get() = MutableStateFlow(null)
 
     /** Abre la conexión sin mandar ningún comando, para empezar a recibir [imeEvents]. */
     suspend fun connect(): Boolean = false

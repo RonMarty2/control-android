@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// Evita que SynologyDrive bloquee los archivos temporales de build
+layout.buildDirectory.set(file("${System.getProperty("java.io.tmpdir")}/control-android-build"))
+
 android {
     namespace = "com.rnd.remoto"
     compileSdk = 34
@@ -13,8 +16,8 @@ android {
         applicationId = "com.rnd.remoto"
         minSdk = 22
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {

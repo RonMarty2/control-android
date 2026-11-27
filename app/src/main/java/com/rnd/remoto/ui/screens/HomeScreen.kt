@@ -15,11 +15,18 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.SettingsRemote
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import com.rnd.remoto.update.GithubAutoUpdater
+import com.rnd.remoto.update.GithubReleaseUpdate
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -92,13 +99,57 @@ fun HomeScreen(
     val context = LocalContext.current
     var pendingEdit by remember { mutableStateOf<RemoteDevice?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    var availableUpdate by remember { mutableStateOf<GithubReleaseUpdate?>(null) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
+
+    // Al abrir la app, verifica en segundo plano si hay una nueva versión publicada en GitHub
+    LaunchedEffect(Unit) {
+        availableUpdate = GithubAutoUpdater.checkForUpdate(context)
+    }
+
+    fun triggerUpdate(update: GithubReleaseUpdate) {
+        if (isDownloadingUpdate) return
+        scope.launch {
+            isDownloadingUpdate = true
+            downloadProgress = 0
+            val res = GithubAutoUpdater.downloadAndInstall(context, update) { pct ->
+                downloadProgress = pct
+            }
+            isDownloadingUpdate = false
+            res.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "No se pudo descargar la actualización")
+            }
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Control Remoto") },
+                title = {
+                    Column {
+                        Text("Control Remoto")
+                        Text(
+                            "v${GithubAutoUpdater.currentVersionName(context)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
                 actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            val update = GithubAutoUpdater.checkForUpdate(context)
+                            if (update != null) {
+                                availableUpdate = update
+                            } else {
+                                snackbarHostState.showSnackbar("Ya tenés la última versión instalada (v${GithubAutoUpdater.currentVersionName(context)})")
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = "Buscar actualizaciones en GitHub")
+                    }
                     IconButton(onClick = {
                         // Pide al launcher colocar el widget (el sistema muestra una confirmación).
                         val manager = AppWidgetManager.getInstance(context)
@@ -122,60 +173,109 @@ fun HomeScreen(
             }
         }
     ) { padding ->
-        if (devices.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                    Icon(
-                        Icons.Default.SettingsRemote,
-                        contentDescription = null,
-                        modifier = Modifier.size(72.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "Todavía no agregaste ningún dispositivo",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Agrega tu TV, TV box o equipo infrarrojo para controlarlo desde acá",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    FilledTonalButton(onClick = onAddDevice) { Text("Agregar dispositivo") }
-                }
-            }
-        } else {
-            val grouped = devices.groupBy { it.type.category() }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                CATEGORY_ORDER.forEach { category ->
-                    val devicesInCategory = grouped[category] ?: return@forEach
-                    item(key = "header_$category") {
-                        Text(
-                            categoryLabel(category),
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-                    }
-                    items(devicesInCategory, key = { it.id }) { device ->
-                        DeviceRow(
-                            device = device,
-                            onOpen = { onOpenDevice(device.id) },
-                            onEdit = { pendingEdit = device },
-                            onDelete = {
-                                scope.launch {
-                                    repository.deleteDevice(device.id)
-                                    val result = snackbarHostState.showSnackbar(
-                                        message = "\"${device.name}\" eliminado",
-                                        actionLabel = "Deshacer",
-                                        duration = SnackbarDuration.Long
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            availableUpdate?.let { update ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Nueva versión v${update.versionName} disponible",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                if (update.notes.isNotBlank()) {
+                                    Text(
+                                        update.notes,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
-                                    if (result == SnackbarResult.ActionPerformed) repository.saveDevice(device)
                                 }
                             }
+                            Button(
+                                enabled = !isDownloadingUpdate,
+                                onClick = { triggerUpdate(update) }
+                            ) {
+                                Text(if (isDownloadingUpdate) "$downloadProgress%" else "Actualizar")
+                            }
+                        }
+                        if (isDownloadingUpdate) {
+                            LinearProgressIndicator(
+                                progress = { (downloadProgress / 100f).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (devices.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                        Icon(
+                            Icons.Default.SettingsRemote,
+                            contentDescription = null,
+                            modifier = Modifier.size(72.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "Todavía no agregaste ningún dispositivo",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            "Agrega tu TV, TV box o equipo infrarrojo para controlarlo desde acá",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        FilledTonalButton(onClick = onAddDevice) { Text("Agregar dispositivo") }
+                    }
+                }
+            } else {
+                val grouped = devices.groupBy { it.type.category() }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    CATEGORY_ORDER.forEach { category ->
+                        val devicesInCategory = grouped[category] ?: return@forEach
+                        item(key = "header_$category") {
+                            Text(
+                                categoryLabel(category),
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                        items(devicesInCategory, key = { it.id }) { device ->
+                            DeviceRow(
+                                device = device,
+                                onOpen = { onOpenDevice(device.id) },
+                                onEdit = { pendingEdit = device },
+                                onDelete = {
+                                    scope.launch {
+                                        repository.deleteDevice(device.id)
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "\"${device.name}\" eliminado",
+                                            actionLabel = "Deshacer",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) repository.saveDevice(device)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }
