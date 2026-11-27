@@ -335,6 +335,7 @@ private fun JellyfinBrowserView(
 
     var isLoading by remember { mutableStateOf(false) }
     var isSendingPlay by remember { mutableStateOf(false) }
+    var isCheckingItem by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(JellyfinFilter.TODO) }
 
     var searchQuery by remember { mutableStateOf("") }
@@ -406,8 +407,9 @@ private fun JellyfinBrowserView(
             onMessage(
                 when {
                     isOtherAppKnown -> "Abriendo Jellyfin y reproduciendo \"${item.displayTitle}\"..."
-                    resume -> "Continuando \"${item.displayTitle}\" en TV Box..."
-                    else -> "Iniciando \"${item.displayTitle}\" desde el principio..."
+                    resume && item.playbackPositionTicks > 0L -> "Continuando \"${item.displayTitle}\" en TV Box..."
+                    !resume -> "Iniciando \"${item.displayTitle}\" desde el principio..."
+                    else -> "Reproduciendo \"${item.displayTitle}\" en TV Box..."
                 }
             )
             val result = client.playOnTvBox(
@@ -443,9 +445,11 @@ private fun JellyfinBrowserView(
             selectedSeriesForEpisodes = item
             return
         }
-        if (isSendingPlay) return
+        if (isSendingPlay || isCheckingItem) return
         scope.launch {
+            isCheckingItem = true
             val fresh = client.getItem(item.id).getOrDefault(item)
+            isCheckingItem = false
             if (fresh.playbackPositionTicks > 0L) {
                 selectedItemForResumePrompt = fresh
             } else {
@@ -492,8 +496,9 @@ private fun JellyfinBrowserView(
                 onStop = {
                     scope.launch {
                         client.sendPlaybackCommand("Stop", device.name)
-                        delay(500)
+                        delay(700)
                         activeSessions = client.getControllableSessions().getOrDefault(emptyList())
+                        resumeItems = client.getResumeItems().getOrDefault(resumeItems)
                     }
                 },
                 onNext = {
@@ -1123,12 +1128,15 @@ private fun SeriesEpisodesDialog(
         val loadedSeasons = client.getSeasons(series.id).getOrDefault(emptyList())
         seasons = loadedSeasons
         val firstSeason = loadedSeasons.firstOrNull()?.id
-        selectedSeasonId = firstSeason
-        episodes = client.getEpisodes(series.id, firstSeason).getOrDefault(emptyList())
-        isLoading = false
+        if (firstSeason != null) {
+            selectedSeasonId = firstSeason
+        } else {
+            episodes = client.getEpisodes(series.id, null).getOrDefault(emptyList())
+            isLoading = false
+        }
     }
 
-    LaunchedEffect(selectedSeasonId) {
+    LaunchedEffect(series.id, selectedSeasonId) {
         val seasonId = selectedSeasonId ?: return@LaunchedEffect
         isLoading = true
         episodes = client.getEpisodes(series.id, seasonId).getOrDefault(emptyList())

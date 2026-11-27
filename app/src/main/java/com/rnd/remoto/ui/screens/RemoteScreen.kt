@@ -146,7 +146,10 @@ fun RemoteScreen(
 
         fun report(result: Result<Unit>) {
             val error = result.exceptionOrNull() ?: return
-            scope.launch { snackbarHostState.showSnackbar(error.message ?: "Error al enviar el comando") }
+            scope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(error.message ?: "Error al enviar el comando")
+            }
         }
 
         Column(
@@ -242,7 +245,8 @@ private fun NetworkRemoteBody(
     val context = LocalContext.current
     var connection by remember(device.id) { mutableStateOf<ConnectionState?>(null) }
     var selectedTab by remember(device.id) { mutableStateOf(0) } // 0 = Control, 1 = Jellyfin
-    val activePackage by (controller?.currentForegroundApp ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
+    val fallbackForegroundFlow = remember { kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+    val activePackage by (controller?.currentForegroundApp ?: fallbackForegroundFlow).collectAsState()
 
     // Auto-sincronización pasiva: cada vez que el TV Box avisa qué app tiene en primer plano,
     // la guardamos en discoveredApps (y si no es una app del sistema, queda disponible para usar).

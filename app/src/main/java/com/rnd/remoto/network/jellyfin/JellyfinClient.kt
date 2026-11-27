@@ -232,6 +232,7 @@ class JellyfinClient(
     suspend fun getItem(itemId: String): Result<JellyfinMediaItem> = withContext(Dispatchers.IO) {
         runCatching {
             val obj = getJson("/Users/$userId/Items/$itemId")
+            if (obj.optString("Id").isBlank()) error("Item no encontrado en Jellyfin")
             parseItem(obj)
         }
     }
@@ -263,10 +264,16 @@ class JellyfinClient(
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val id = obj.optString("Id")
+                if (id.isBlank()) continue
                 val client = obj.optString("Client")
                 val deviceName = obj.optString("DeviceName")
-                val deviceId = obj.optString("DeviceId")
-                if (deviceId == "control-remoto-android") continue
+                val sessionDeviceId = obj.optString("DeviceId")
+                // Ignorar nuestras propias sesiones de control remoto (celular/tablet)
+                if (
+                    sessionDeviceId == deviceId ||
+                    sessionDeviceId.startsWith("control-remoto-") ||
+                    client.equals("ControlRemotoAndroid", ignoreCase = true)
+                ) continue
                 val supportsRemote = obj.optBoolean("SupportsRemoteControl", false)
                 val nowPlayingObj = obj.optJSONObject("NowPlayingItem")
                 val nowPlayingId = nowPlayingObj?.optString("Id")?.takeIf { it.isNotBlank() }
@@ -276,8 +283,8 @@ class JellyfinClient(
                 val positionTicks = playState?.optLong("PositionTicks", 0L) ?: 0L
                 val isActive = obj.optBoolean("IsActive", false)
                 val userName = obj.optString("UserName").takeIf { it.isNotBlank() }
-                // Consideramos sesiones de TV o que soporten control remoto
-                if (supportsRemote || client.contains("TV", ignoreCase = true) || client.contains("Android", ignoreCase = true)) {
+                // Solo sesiones que realmente soporten control remoto o sean clientes de TV
+                if (supportsRemote || client.contains("TV", ignoreCase = true)) {
                     list.add(
                         JellyfinSessionInfo(
                             id = id,
@@ -369,8 +376,9 @@ class JellyfinClient(
             val session = targetSession
                 ?: error("No se detectó Jellyfin activo en el TV Box. Revisá que la app Jellyfin esté instalada en el TV.")
 
-            // Si este mismo título ya se está reproduciendo en Jellyfin, basta con Seek directo (+ Unpause si estaba pausado)
-            if (!wokenUp && session.nowPlayingItemId == playable.id && (isJellyfinKnownForeground || !session.isPaused)) {
+            // Si este mismo título ya se está reproduciendo (o pausado en una sesión activa) en Jellyfin,
+            // basta con Seek directo (+ Unpause si estaba pausado) sin reiniciar el player.
+            if (!wokenUp && session.nowPlayingItemId == playable.id && (isJellyfinKnownForeground || !session.isPaused || session.isActive)) {
                 sendSeek(session.id, targetTicks)
                 if (session.isPaused) {
                     runCatching { postCommand("/Sessions/${session.id}/Playing/Unpause") }
