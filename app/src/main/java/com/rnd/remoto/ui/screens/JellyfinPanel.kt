@@ -384,17 +384,22 @@ private fun JellyfinBrowserView(
         loadAll()
     }
 
-    // Búsqueda automática a medida que escribís (con pequeño debounce de 350ms)
-    LaunchedEffect(searchQuery, client) {
+    // Búsqueda automática a medida que escribís o cambiás el filtro (con pequeño debounce de 350ms)
+    LaunchedEffect(searchQuery, filter, client) {
         val q = searchQuery.trim()
         if (q.isEmpty()) {
             searchResults = null
             isSearching = false
             return@LaunchedEffect
         }
+        val includeTypes = when (filter) {
+            JellyfinFilter.TODO -> "Movie,Series,Episode"
+            JellyfinFilter.PELICULAS -> "Movie"
+            JellyfinFilter.SERIES -> "Series"
+        }
         isSearching = true
         delay(350)
-        searchResults = client.search(q).getOrDefault(emptyList())
+        searchResults = client.search(q, includeItemTypes = includeTypes).getOrDefault(emptyList())
         isSearching = false
     }
 
@@ -636,21 +641,36 @@ private fun JellyfinBrowserView(
         // Resultados de búsqueda si hay texto en el buscador
         val currentSearchResults = searchResults
         if (currentSearchResults != null) {
+            val filteredSearchResults = when (filter) {
+                JellyfinFilter.TODO -> currentSearchResults
+                JellyfinFilter.PELICULAS -> currentSearchResults.filter { it.type == "Movie" }
+                JellyfinFilter.SERIES -> currentSearchResults.filter { it.type == "Series" }
+            }
+            val filterLabel = when (filter) {
+                JellyfinFilter.TODO -> ""
+                JellyfinFilter.PELICULAS -> " en Películas"
+                JellyfinFilter.SERIES -> " en Series"
+            }
             Text(
-                text = if (isSearching) "Buscando \"$searchQuery\"..."
-                else "Resultados para \"$searchQuery\" (${currentSearchResults.size})",
+                text = if (isSearching) "Buscando \"$searchQuery\"$filterLabel..."
+                else "Resultados$filterLabel para \"$searchQuery\" (${filteredSearchResults.size})",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
-            if (currentSearchResults.isEmpty() && !isSearching) {
+            if (filteredSearchResults.isEmpty() && !isSearching) {
+                val emptyText = when (filter) {
+                    JellyfinFilter.TODO -> "No se encontraron películas ni series con ese nombre."
+                    JellyfinFilter.PELICULAS -> "No se encontraron películas con ese nombre."
+                    JellyfinFilter.SERIES -> "No se encontraron series con ese nombre."
+                }
                 Text(
-                    "No se encontraron películas ni series con ese nombre.",
+                    emptyText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 MediaHorizontalRow(
-                    items = currentSearchResults,
+                    items = filteredSearchResults,
                     client = client,
                     onTapItem = { item -> onSelectPlayableItem(item) },
                     onQuickPlaySeries = { series -> playItemOnTv(series) }

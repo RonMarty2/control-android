@@ -197,17 +197,27 @@ class JellyfinClient(
         }
     }
 
-    /** 5. Buscador directo (Películas, Series y Episodios). */
-    suspend fun search(query: String, limit: Int = 40): Result<List<JellyfinMediaItem>> = withContext(Dispatchers.IO) {
+    /** 5. Buscador directo (Películas, Series y Episodios, o filtrado por tipo). */
+    suspend fun search(
+        query: String,
+        includeItemTypes: String = "Movie,Series,Episode",
+        limit: Int = 40
+    ): Result<List<JellyfinMediaItem>> = withContext(Dispatchers.IO) {
         runCatching {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+            val allowedTypes = includeItemTypes
+                .split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
             val json = getJson(
                 "/Users/$userId/Items?searchTerm=$encoded&Recursive=true" +
                     "&CollapseBoxSetItems=false" +
-                    "&IncludeItemTypes=Movie,Series,Episode&Limit=$limit" +
+                    "&IncludeItemTypes=$includeItemTypes&Limit=$limit" +
                     "&Fields=Overview,ProductionYear"
             )
-            parseItemsArray(json.optJSONArray("Items"))
+            val parsed = parseItemsArray(json.optJSONArray("Items"))
+            if (allowedTypes.isEmpty()) parsed else parsed.filter { it.type in allowedTypes }
         }
     }
 

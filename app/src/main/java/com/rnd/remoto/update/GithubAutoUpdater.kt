@@ -6,14 +6,21 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.rnd.remoto.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 private const val TAG = "GithubAutoUpdater"
 private const val GITHUB_REPO = "RonMarty2/control-android"
@@ -32,12 +39,69 @@ data class GithubReleaseUpdate(
  */
 object GithubAutoUpdater {
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
+    @Volatile
+    private var cachedHttp: OkHttpClient? = null
+
+    /**
+     * Construye un OkHttpClient que confía en los certificados raíz del sistema más los CA raíz
+     * modernos usados por GitHub y su CDN (ISRG Root X1/X2, Sectigo E46/R46, DigiCert G2/G3).
+     * Esto evita `CertPathValidatorException: Trust anchor for certification path not found`
+     * en dispositivos Android antiguos (ej. Android 5.1/6.0/7.0 o Huawei sin almacén de CA actualizado).
+     */
+    private fun httpClient(context: Context): OkHttpClient {
+        cachedHttp?.let { return it }
+        return synchronized(this) {
+            cachedHttp?.let { return it }
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+
+            runCatching {
+                val trustManager = buildCombinedTrustManager(context.applicationContext)
+                val sslContext = SSLContext.getInstance("TLS").apply {
+                    init(null, arrayOf(trustManager), null)
+                }
+                builder.sslSocketFactory(sslContext.socketFactory, trustManager)
+            }.onFailure { e ->
+                Log.w(TAG, "No se pudieron cargar los CA raíz adicionales; usando almacén del sistema: ${e.message}")
+            }
+
+            builder.build().also { cachedHttp = it }
+        }
+    }
+
+    private fun buildCombinedTrustManager(context: Context): X509TrustManager {
+        val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null, null)
+        }
+        var index = 0
+
+        // 1. Incluir todos los certificados raíz confiables del sistema Android
+        val systemTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+            init(null as KeyStore?)
+        }
+        val systemTm = systemTmf.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
+        systemTm?.acceptedIssuers?.forEach { cert ->
+            keyStore.setCertificateEntry("sys_${index++}", cert)
+        }
+
+        // 2. Sumar los CA raíz modernos (ISRG Root X1/X2, Sectigo E46/R46, DigiCert G2/G3)
+        val cf = CertificateFactory.getInstance("X.509")
+        val pemText = context.resources.openRawResource(R.raw.github_extra_roots).bufferedReader().use { it.readText() }
+        val pemRegex = Regex("-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----")
+        pemRegex.findAll(pemText).forEach { match ->
+            val certBytes = match.value.toByteArray(Charsets.US_ASCII)
+            val cert = cf.generateCertificate(ByteArrayInputStream(certBytes))
+            keyStore.setCertificateEntry("extra_${index++}", cert)
+        }
+
+        val combinedTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+            init(keyStore)
+        }
+        return combinedTmf.trustManagers.filterIsInstance<X509TrustManager>().first()
+    }
 
     fun currentVersionName(context: Context): String {
         return runCatching {
@@ -60,7 +124,7 @@ object GithubAutoUpdater {
                 .get()
                 .build()
 
-            http.newCall(req).execute().use { resp ->
+            httpClient(context).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val json = JSONObject(resp.body?.string().orEmpty())
                 val tagName = json.optString("tag_name").removePrefix("v").removePrefix("V").trim()
@@ -117,7 +181,7 @@ object GithubAutoUpdater {
             val targetFile = File(updatesDir, "ControlRemoto-${update.versionName}.apk")
             if (targetFile.exists()) targetFile.delete()
 
-            http.newCall(req).execute().use { resp ->
+            httpClient(context).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("Error al descargar actualización (HTTP ${resp.code})")
                 val body = resp.body ?: error("Archivo APK vacío")
                 val totalBytes = body.contentLength()
